@@ -21,8 +21,8 @@ class App(QMainWindow, Logic):
         self.initialize_logic(roots, allow_delete)
         self.setWindowTitle("AI 기록 정리")
         self.setWindowIcon(icon("app"))
-        self.resize(1280, 800)
         self.setMinimumSize(1000, 650)
+        self.fit_to_screen(1280, 800)
         self._updating = False
         self.actions = {}
         self.build_actions()
@@ -30,6 +30,19 @@ class App(QMainWindow, Logic):
         self.update_actions()
         if auto_refresh:
             QTimer.singleShot(0, self.refresh)
+
+    def fit_to_screen(self, width, height, frame=40):
+        # Keep the title bar inside the work area on scaled screens or with a top taskbar.
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(width, height)
+            return
+        area = screen.availableGeometry()
+        width = max(self.minimumWidth(), min(width, area.width() - frame))
+        height = max(self.minimumHeight(), min(height, area.height() - frame))
+        self.resize(width, height)
+        self.move(area.x() + max(0, (area.width() - width) // 2),
+                  area.y() + max(0, (area.height() - height - frame) // 2))
 
     def action(self, key, title, callback, name=None, shortcut=None):
         action = QAction(icon(name) if name else self.windowIcon(), title, self)
