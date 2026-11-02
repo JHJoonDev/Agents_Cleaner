@@ -1,10 +1,9 @@
 """B2 dialogs. All mutations go through the existing operations API."""
-from datetime import datetime
 from pathlib import Path
 import os
 import textwrap
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QThreadPool, Qt, Signal, Slot
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QFileDialog, QGroupBox,
                                QHBoxLayout, QHeaderView, QLineEdit, QMessageBox, QPlainTextEdit,
@@ -12,6 +11,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QFileDialo
 
 from . import operations
 from .model import readable_size
+from .qt_models import Task, display_date
 from .qt_style import icon, label, message
 
 
@@ -34,7 +34,48 @@ def table(headers, parent=None):
     return widget
 
 
-class ReviewDialog(QDialog):
+class AsyncDialog(QDialog):
+    """One reader at a time, keeping only the latest requested folder."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._reads, self._next_read, self._read_id = {}, None, 0
+        self._closed = False
+        self.finished.connect(self._read_closed)
+
+    def _read_closed(self, _):
+        self._closed = True
+        self._next_read = None
+
+    def _start_read(self, function, callback):
+        if self._closed:
+            return
+        if self._reads:
+            self._next_read = function, callback
+            return
+        self._read_id += 1
+        event = str(self._read_id)
+        task = Task(function, event)
+        task.signals.done.connect(self._read_done, Qt.ConnectionType.QueuedConnection)
+        self._reads[event] = task, callback
+        try:
+            QThreadPool.globalInstance().start(task)
+        except Exception as exc:
+            self._read_done(event, None, str(exc) or type(exc).__name__)
+
+    @Slot(str, object, object)
+    def _read_done(self, event, result, error):
+        job = self._reads.pop(event, None)
+        if job is None or self._closed:
+            return
+        if self._next_read is not None:
+            function, callback = self._next_read
+            self._next_read = None
+            self._start_read(function, callback)
+        else:
+            job[1](result, error)
+
+
+class ReviewDialog(AsyncDialog):
     requested = Signal(object)
 
     def __init__(self, selected, plan, destination, codex="", allow_delete=True, parent=None):
@@ -43,6 +84,7 @@ class ReviewDialog(QDialog):
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.resize(880, 700 if plan else 620)
         self.allow_delete = allow_delete
+        self._submitted = False
         self.selected, self.plan = list(selected), list(plan)
         self.eligible = [i for i in plan if not i["problem"]]
         outer = QVBoxLayout(self)
@@ -141,33 +183,42 @@ class ReviewDialog(QDialog):
             self.update_backup_info()
 
     def update_backup_info(self):
-        try:
-            rows = operations.list_backups(Path(self.destination.text()))
+        folder = Path(self.destination.text())
+        self.backup_info.setText("백업 목록을 읽는 중…")
+        self._start_read(lambda: operations.list_backups(folder), self._backup_info_ready)
+
+    def _backup_info_ready(self, rows, error):
+        if error:
+            self.backup_info.setText(f"백업 목록 조회 실패: {error}")
+        else:
             self.backup_info.setText(f"이 위치의 기존 백업 {len(rows)}개 · {readable_size(sum(r[1] for r in rows))} (백업 관리에서 정리)")
-        except OSError as exc:
-            self.backup_info.setText(f"백업 목록 조회 실패: {exc}")
 
     def update_enabled(self, *_):
-        valid = self.allow_delete and bool(self.selected) and bool(self.destination.text().strip())
+        valid = not self._submitted and self.allow_delete and bool(self.selected) and bool(self.destination.text().strip())
         self.confirm_button.setEnabled(valid and self.agreed.isChecked() and (not self.eligible or self.moved.isChecked()))
 
     def confirm(self):
+        if self._closed or self._submitted:
+            return
         self.update_enabled()
         if not self.confirm_button.isEnabled():
             return
+        self._submitted = True
+        self.confirm_button.setEnabled(False)
         self.requested.emit({"destination": Path(self.destination.text()).expanduser(),
                              "include_caches": self.cache_backup.isChecked(),
                              "workspaces": [i["path"] for i in self.eligible]})
         self.accept()
 
 
-class BackupDialog(QDialog):
+class BackupDialog(AsyncDialog):
     def __init__(self, destination, allow_delete=True, changed=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("백업 관리")
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.resize(800, 470)
         self.allow_delete, self.changed = allow_delete, changed
+        self._loading, self._removing = False, False
         self.folder = Path(destination)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 15, 18, 15)
@@ -192,20 +243,30 @@ class BackupDialog(QDialog):
         self.load()
 
     def load(self):
+        self._loading = True
+        self.remove_button.setEnabled(False)
         self.tree.clear()
         self.location.setText(str(self.folder))
-        try:
-            rows = operations.list_backups(self.folder)
+        self.summary.setText("백업 목록을 읽는 중…")
+        folder = self.folder
+        self._start_read(lambda: operations.list_backups(folder), self._loaded)
+
+    def _loaded(self, rows, error):
+        self._loading = False
+        self.remove_button.setEnabled(self.allow_delete and not self._removing)
+        if error:
+            self.summary.setText(f"조회 실패: {error}")
+        else:
             for path, size, modified in rows:
-                row = QTreeWidgetItem([path.name, readable_size(size), datetime.fromtimestamp(modified).strftime("%Y-%m-%d %H:%M")])
+                row = QTreeWidgetItem([path.name, readable_size(size), display_date(modified)])
                 row.setData(0, Qt.ItemDataRole.UserRole, str(path))
                 row.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.tree.addTopLevelItem(row)
             self.summary.setText(f"백업 {len(rows)}개 · 합계 {readable_size(sum(r[1] for r in rows))}. 선택한 백업은 휴지통을 거치지 않고 바로 삭제됩니다.")
-        except OSError as exc:
-            self.summary.setText(f"조회 실패: {exc}")
 
     def choose(self):
+        if self._removing:
+            return
         picked = QFileDialog.getExistingDirectory(self, "백업 폴더", str(self.folder))
         if picked:
             self.folder = Path(picked)
@@ -218,20 +279,38 @@ class BackupDialog(QDialog):
             os.startfile(str(self.folder))
 
     def remove(self):
-        if not self.allow_delete:
+        if not self.allow_delete or self._loading or self._removing or self._closed:
             return
         chosen = [Path(i.data(0, Qt.ItemDataRole.UserRole)) for i in self.tree.selectedItems()]
         if not chosen:
             message(self, "선택 필요", "삭제할 백업을 선택하세요. Ctrl·Shift로 여러 개를 고를 수 있습니다.")
             return
+        self._removing = True
+        self.remove_button.setEnabled(False)
         answer = QMessageBox.question(self, "백업 영구 삭제", f"백업 {len(chosen)}개를 영구 삭제합니다.\n이 백업에 든 기록은 더 이상 복구할 수 없습니다. 계속할까요?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes:
+            self._removing = False
+            self.remove_button.setEnabled(self.allow_delete)
             return
-        try:
-            operations.remove_backups(chosen, self.folder)
-        except Exception as exc:
-            message(self, "삭제 실패", str(exc), critical=True)
+        folder = self.folder
+        self.summary.setText("선택한 백업을 정리하는 중…")
+        self._start_read(lambda: operations.remove_backups(chosen, folder), self._removed)
+
+    def _removed(self, _, error):
+        if error:
+            message(self, "삭제 실패", error, critical=True)
+        self._removing = False
         self.load()
+
+    def reject(self):
+        if not self._removing:
+            super().reject()
+
+    def closeEvent(self, event):
+        if self._removing:
+            event.ignore()
+        else:
+            super().closeEvent(event)
 
 
 class ProcessesDialog(QDialog):

@@ -1,8 +1,9 @@
 """Qt controller: the same backend calls and snapshots as the Tk fallback."""
 from pathlib import Path
 from collections import defaultdict
+from time import monotonic
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot, Qt
+from PySide6.QtCore import QThreadPool, QTimer, Slot, Qt
 
 from . import operations
 from .model import signature
@@ -10,23 +11,8 @@ from .providers import scan
 from .runtime import codex_cli, orca_projects, running_processes
 from .workspaces import ai_homes, conversations_in, fixed_problem, key as path_key, plan_workspaces
 from .qt_dialogs import BackupDialog, ProcessesDialog, ResultDialog, ReviewDialog
+from .qt_models import Task
 from .qt_style import message
-
-
-class Signals(QObject):
-    done = Signal(str, object, object)
-
-
-class Task(QRunnable):
-    def __init__(self, function, event):
-        super().__init__()
-        self.function, self.event, self.signals = function, event, Signals()
-
-    def run(self):
-        try:
-            self.signals.done.emit(self.event, self.function(), None)
-        except Exception as exc:
-            self.signals.done.emit(self.event, None, str(exc))
 
 
 class Logic:
@@ -39,20 +25,35 @@ class Logic:
         self.codex, self.busy, self.pending = "", False, []
         self.jobs, self.dialogs = [], []
         self.pool = QThreadPool.globalInstance()
+        self.job_started, self.job_status = None, ""
+        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer.setInterval(1000)
+        self.elapsed_timer.timeout.connect(self.update_busy_status)
+
+    def update_busy_status(self):
+        if self.busy and self.job_started is not None:
+            seconds = max(0, int(monotonic() - self.job_started))
+            self.status_text.setText(f"{self.job_status} ({seconds}초 경과)")
 
     def launch(self, function, event):
-        if self.busy:
+        if self.busy or self._closing:
             return False
         self.busy = True
+        self.job_started, self.job_status = monotonic(), self.status_text.text()
+        self.elapsed_timer.start()
         self.update_actions()
         task = Task(function, event)
         task.signals.done.connect(self.finished, Qt.ConnectionType.QueuedConnection)
         self.jobs.append(task)
-        self.pool.start(task)
+        try:
+            self.pool.start(task)
+        except Exception as exc:
+            self.finished(event, None, str(exc) or type(exc).__name__)
+            return False
         return True
 
     def refresh(self):
-        if self.busy:
+        if self.busy or self._closing:
             return
         self.status_text.setText("앱별 프로젝트·대화기록을 읽는 중…")
         def work():
@@ -77,9 +78,15 @@ class Logic:
             except Exception as exc:
                 codex = f"찾지 못함: {exc}"
             dirs, protected, homes = {}, {}, ai_homes(entries)
+            seen = set()
             for e in entries:
-                if e.kind == "conversation" and Path(e.project).is_absolute() and Path(e.project).is_dir():
-                    k = path_key(e.project)
+                if e.kind != "conversation" or not Path(e.project).is_absolute():
+                    continue
+                k = path_key(e.project)
+                if k in seen:
+                    continue
+                seen.add(k)
+                if Path(e.project).is_dir():
                     dirs[k] = e.project
                     problem = fixed_problem(e.project, homes)
                     if problem:
@@ -89,11 +96,26 @@ class Logic:
 
     @Slot(str, object, object)
     def finished(self, event, result, error):
-        self.busy = False
+        self.elapsed_timer.stop()
+        self.job_started = None
         self.jobs.clear()
-        if error:
-            self.status_text.setText("실패: " + error)
+        try:
+            self.apply_result(event, result, error)
+        except Exception as exc:
+            self.errors.append(f"화면 갱신 실패: {exc}")
+            self.status_text.setText("실패: " + (str(exc) or type(exc).__name__))
+            message(self, "작업 중단", str(exc) or type(exc).__name__, critical=True)
+        finally:
+            self.busy = False
             self.update_actions()
+        if event == "delete" and not error:
+            self.refresh()
+
+    def apply_result(self, event, result, error):
+        if error:
+            if event == "scan":
+                self.errors.append(error)
+            self.status_text.setText("실패: " + error)
             message(self, "작업 중단", error, critical=True)
             return
         if event == "scan":
@@ -113,9 +135,13 @@ class Logic:
             self.status_text.setText("작업 폴더 확인 완료")
             self.open_review(self.pending, result)
         elif event == "delete":
-            ResultDialog(result, self).exec()
-            self.refresh()
-        self.update_actions()
+            _, good, failed, _ = result
+            self.status_text.setText(f"정리 완료 · 성공 {len(good)}개 / 오류 {len(failed)}개 · 결과창을 닫으면 목록을 새로고칩니다.")
+            dialog = ResultDialog(result, self)
+            try:
+                dialog.exec()
+            finally:
+                dialog.deleteLater()
 
     def is_running(self, e):
         return e.provider in self.running or ("orca" in str(e.home).lower() and "Orca" in self.running)
@@ -131,6 +157,10 @@ class Logic:
 
     def set_records_checked(self, members, state, group=None):
         if self.busy:
+            self.sync_checks()
+            return
+        if group is not None and self.errors:
+            self.detail_hint.setText("조회 오류가 있어 프로젝트 일괄 선택을 차단했습니다. 개별 대화만 선택할 수 있습니다.")
             self.sync_checks()
             return
         eligible = [e for e in members if self.can_select(e)]
@@ -151,6 +181,10 @@ class Logic:
 
     def toggle_workspace(self, group, desired=None):
         if self.busy:
+            self.sync_checks()
+            return
+        if self.errors:
+            self.detail_hint.setText("조회 오류가 있어 작업 폴더 삭제를 차단했습니다. 새로고침 후 오류를 확인하세요.")
             self.sync_checks()
             return
         k = self.workspace_of(group, self.groups[group])
@@ -186,6 +220,7 @@ class Logic:
             self.sync_checks()
 
     def show_dialog(self, dialog):
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.dialogs.append(dialog)
         dialog.finished.connect(lambda _: self.dialogs.remove(dialog) if dialog in self.dialogs else None)
         dialog.open()
@@ -204,6 +239,9 @@ class Logic:
 
     def review(self):
         if self.busy or not self.allow_delete:
+            return
+        if self.errors and (self.workspaces or self.project_groups):
+            message(self, "삭제 차단", "조회 오류가 있어 프로젝트·작업 폴더 삭제를 차단했습니다. 새로고침 후 확인하세요.")
             return
         selected = [e for e in self.entries if e.key in self.checked and self.can_select(e)]
         if not selected:
@@ -225,6 +263,9 @@ class Logic:
 
     def submit_review(self, selected, groups, everything, payload):
         if self.busy or not self.allow_delete:
+            return
+        if self.errors and (groups or payload.get("workspaces")):
+            message(self, "삭제 차단", "조회 오류가 있어 프로젝트·작업 폴더 삭제를 차단했습니다. 새로고침 후 확인하세요.")
             return
         if any(not self.can_select(e) for e in selected):
             message(self, "삭제 차단", "실행 중이거나 차단된 항목이 있습니다. 새로고침 후 확인하세요.")

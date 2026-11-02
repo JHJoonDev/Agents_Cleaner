@@ -1,5 +1,6 @@
-"""Qt-only presentation models; no deletion or filesystem mutation."""
-from PySide6.QtCore import QSortFilterProxyModel, Qt, QRect
+"""Qt presentation models and the shared background task wrapper."""
+from datetime import datetime
+from PySide6.QtCore import QObject, QRunnable, QSortFilterProxyModel, Qt, QRect, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
@@ -13,6 +14,24 @@ SEARCH = NODE + 3
 HEADERS = ["프로젝트 / 대화", "앱", "구분", "기록 용량", "최근 변경", "상태", "작업 폴더"]
 
 
+class Signals(QObject):
+    done = Signal(str, object, object)
+
+
+class Task(QRunnable):
+    """Always report termination, including SystemExit in third-party readers."""
+    def __init__(self, function, event):
+        super().__init__()
+        self.function, self.event, self.signals = function, event, Signals()
+
+    def run(self):
+        try:
+            result, error = self.function(), None
+        except BaseException as exc:
+            result, error = None, str(exc) or type(exc).__name__
+        self.signals.done.emit(self.event, result, error)
+
+
 def item(text="", sort=None, numeric=False):
     value = QStandardItem(str(text))
     value.setEditable(False)
@@ -21,6 +40,13 @@ def item(text="", sort=None, numeric=False):
         value.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         value.setFont(QFont("Consolas", 9))
     return value
+
+
+def display_date(timestamp):
+    try:
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M") if timestamp else ""
+    except (OverflowError, OSError, ValueError):
+        return "날짜 오류"
 
 
 class RecordModel(QStandardItemModel):
@@ -36,6 +62,7 @@ class RecordProxy(QSortFilterProxyModel):
         super().__init__(parent)
         self.query = ""
         self.setSortRole(SORT)
+        self.setFilterRole(SEARCH)
 
     def set_query(self, text):
         self.beginFilterChange()
@@ -43,9 +70,11 @@ class RecordProxy(QSortFilterProxyModel):
         self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
 
     def filterAcceptsRow(self, row, parent):
-        idx = self.sourceModel().index(row, 0, parent)
         if parent.isValid():
-            idx = parent.siblingAtColumn(0)
+            # The parent already passed the group search. Do not search its
+            # full conversation text again for each of its children.
+            return True
+        idx = self.sourceModel().index(row, 0, parent)
         return not self.query or self.query in (idx.data(SEARCH) or "")
 
     def lessThan(self, left, right):

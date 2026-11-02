@@ -101,6 +101,7 @@ class CheckStyle(QProxyStyle):
 
 
 def configure(app: QApplication):
+    app.setWindowIcon(QIcon(str(Path(__file__).resolve().parents[2] / "app.ico")))
     if app.platformName() == "offscreen" and os.name == "nt":
         load_offscreen_fonts()
     app.setStyle(CheckStyle(QStyleFactory.create("Fusion")))

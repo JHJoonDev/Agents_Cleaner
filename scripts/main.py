@@ -21,6 +21,9 @@ def main():
 
 
 def run_gui(allow_delete=True):
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AgentsCleaner.App")
     try:
         from PySide6.QtWidgets import QApplication
     except ImportError:

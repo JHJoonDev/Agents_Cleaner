@@ -17,12 +17,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 QT_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 if QT_AVAILABLE:
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import Qt, QTimer
     from PySide6.QtWidgets import QApplication, QPlainTextEdit
     from PySide6.QtGui import QFontDatabase
     from manager.qt_ui import App
     from manager.qt_dialogs import BackupDialog, ResultDialog, ReviewDialog
     from manager.qt_models import SORT
+    from manager.model import Entry
     from manager.workspaces import key as path_key
 
 
@@ -222,6 +223,77 @@ class QtSmokeTests(unittest.TestCase):
         self.window.actions["backups"].trigger()
         self.assertIsInstance(self.window.dialogs[-1], BackupDialog)
         self.window.dialogs[-1].reject()
+
+    def test_blocked_scan_keeps_event_loop_alive_ignores_duplicate_refresh_and_close(self):
+        self.window.allow_delete = False
+        entered, release = threading.Event(), threading.Event()
+        heartbeat = []
+        original_scan = __import__("manager.providers", fromlist=["scan"]).scan
+        def held_scan(roots):
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("fixture scan was not released")
+            return original_scan(roots)
+        with patch("manager.qt_logic.scan", side_effect=held_scan) as scan, patch("manager.qt_ui.message") as notice:
+            try:
+                self.window.refresh()
+                self.wait(entered.is_set)
+                self.window.refresh()
+                QTimer.singleShot(0, lambda: heartbeat.append(True))
+                self.wait(lambda: bool(heartbeat))
+                self.assertTrue(self.window.busy)
+                self.assertFalse(self.window.close())
+                self.assertTrue(self.window.isVisible())
+                notice.assert_called_once()
+                self.assertFalse(self.window.review_button.isEnabled())
+            finally:
+                release.set()
+                self.wait(lambda: not self.window.busy)
+            scan.assert_called_once()
+
+    def test_failed_process_detection_locks_every_entry(self):
+        self.window.allow_delete = False
+        with patch("manager.qt_logic.running_processes", side_effect=RuntimeError("fixture process query failed")):
+            self.window.refresh()
+            self.wait(lambda: not self.window.busy)
+        self.assertTrue(any("fixture process query failed" in e for e in self.window.errors))
+        self.window.set_records_checked(self.window.entries, True)
+        self.assertFalse(self.window.checked)
+        for row in self.window.model.record_items.values():
+            self.assertFalse(row[0].flags() & Qt.ItemFlag.ItemIsUserCheckable)
+
+    def test_large_cached_model_selection_and_filter_do_not_read_filesystem(self):
+        self.window.allow_delete = False
+        entries = [Entry("Claude", self.claude, str(uuid.UUID(int=i + 1)), f"record {i}",
+                         str(self.project / f"group-{i % 20}"), 0, [], extra={"display_size": i})
+                   for i in range(1000)]
+        grouped = {}
+        for e in entries:
+            grouped.setdefault(e.group, []).append(e)
+        self.window.entries, self.window.groups = entries, grouped
+        self.window.entry_by_key = {e.key: e for e in entries}
+        self.window.dirs = {}
+        with patch("manager.model.tree_files", side_effect=AssertionError("UI must use cached sizes")), \
+             patch.object(Path, "stat", side_effect=AssertionError("UI must not stat filesystem")):
+            self.window.render()
+            self.window.set_records_checked(entries, True)
+            self.window.search.setText("record 999")
+        self.assertEqual(len(self.window.checked), 1000)
+        self.assertEqual(len(self.window.model.record_items), 1000)
+        self.assertEqual(self.window.model.rowCount(), 20)
+        self.assertEqual(self.window.proxy.rowCount(), 1)
+
+    def test_failed_background_task_can_be_refreshed_again(self):
+        self.window.allow_delete = False
+        with patch("manager.qt_logic.scan", side_effect=RuntimeError("fixture scan failure")), \
+             patch("manager.qt_logic.message") as notice:
+            self.window.refresh()
+            self.wait(lambda: not self.window.busy)
+            self.assertTrue(self.window.actions["refresh"].isEnabled())
+            notice.assert_called_once()
+        self.window.refresh()
+        self.wait(lambda: not self.window.busy)
+        self.assertTrue(self.window.entries)
 
 
 class LauncherTests(unittest.TestCase):

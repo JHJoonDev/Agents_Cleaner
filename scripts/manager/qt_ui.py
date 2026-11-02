@@ -1,5 +1,4 @@
 """PySide6 implementation of design/option-b2.html. Tk stays as a fallback."""
-from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QSize
@@ -10,7 +9,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFrame, QGridLay
 
 from .model import readable_size
 from .qt_logic import Logic
-from .qt_models import BYTES, NODE, SEARCH, SORT, RecordModel, RecordProxy, SizeDelegate, exception, item, mark_row, size_item
+from .qt_models import BYTES, NODE, SEARCH, SORT, RecordModel, RecordProxy, SizeDelegate, display_date, exception, item, mark_row, size_item
 from .qt_style import configure, icon, label, message
 
 
@@ -20,16 +19,21 @@ class App(QMainWindow, Logic):
         configure(QApplication.instance())
         self.initialize_logic(roots, allow_delete)
         self.setWindowTitle("AI 기록 정리")
-        self.setWindowIcon(icon("app"))
         self.setMinimumSize(1000, 650)
         self.fit_to_screen(1280, 800)
         self._updating = False
+        self._closing = False
+        self._display_checked = set()
+        self._available_keys = {}
         self.actions = {}
         self.build_actions()
         self.build_widgets()
         self.update_actions()
+        self.startup_timer = QTimer(self)
+        self.startup_timer.setSingleShot(True)
+        self.startup_timer.timeout.connect(self.refresh)
         if auto_refresh:
-            QTimer.singleShot(0, self.refresh)
+            self.startup_timer.start(0)
 
     def fit_to_screen(self, width, height, frame=40):
         # Keep the title bar inside the work area on scaled screens or with a top taskbar.
@@ -193,6 +197,10 @@ class App(QMainWindow, Logic):
 
     def render(self):
         self._updating = True
+        self.tree.setUpdatesEnabled(False)
+        self.proxy.setDynamicSortFilter(False)
+        self._display_checked = set()
+        self._available_keys = {}
         try:
             self.model.removeRows(0, self.model.rowCount())
             self.model.record_items.clear()
@@ -200,7 +208,7 @@ class App(QMainWindow, Logic):
             for group, members in self.groups.items():
                 size = sum(e.extra.get("display_size", 0) for e in members)
                 latest = max(e.updated for e in members)
-                date = datetime.fromtimestamp(latest).strftime("%Y-%m-%d %H:%M") if latest else ""
+                date = display_date(latest)
                 row = [item(Path(group[2]).name or group[2]), item(group[0]), item(f"{len(members)}개", len(members)),
                        size_item(size), item(date, latest, True), item(), item()]
                 node = {"kind": "project", "group": list(group)}
@@ -208,32 +216,39 @@ class App(QMainWindow, Logic):
                 row[0].setData(" ".join(f"{e.provider} {e.home} {e.project} {e.title}" for e in members).casefold(), SEARCH)
                 row[0].setIcon(icon("folder"))
                 row[0].setCheckable(True)
-                if not any(self.can_select(e) for e in members):
+                if self.errors or not any(self.can_select(e) for e in members):
                     row[0].setFlags(row[0].flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
                 k = self.workspace_of(group, members)
                 row[6].setData(node, NODE)
-                if k in self.protected:
+                if self.errors and k:
+                    exception(row[6], "조회 오류로 차단")
+                    row[6].setToolTip("일부 기록을 읽지 못해 작업 폴더를 삭제할 수 없습니다.")
+                elif k in self.protected:
                     exception(row[6], "보호됨")
                     row[6].setToolTip(self.protected[k])
                 elif k:
                     row[6].setText("함께 삭제")
                     row[6].setCheckable(True)
-                self.model.appendRow(row)
                 self.model.group_items[group] = row
+                self._available_keys[group] = set()
                 for e in members:
-                    date = datetime.fromtimestamp(e.updated).strftime("%Y-%m-%d %H:%M") if e.updated else ""
+                    date = display_date(e.updated)
+                    key = e.key
                     child = [item(" ".join(e.title.split())[:160]), item(e.provider), item("캐시" if e.kind == "cache" else "대화"),
                              size_item(e.extra.get("display_size", 0), bool(e.files)), item(date, e.updated, True), item(), item()]
-                    child[0].setData({"kind": "entry", "key": e.key}, NODE)
+                    child[0].setData({"kind": "entry", "key": key}, NODE)
                     child[0].setIcon(icon("file"))
                     child[0].setCheckable(True)
                     if not self.can_select(e):
                         child[0].setFlags(child[0].flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                    else:
+                        self._available_keys[group].add(key)
                     reason = e.blocked or ("앱 종료 후 삭제" if self.is_running(e) else "")
                     exception(child[5], reason)
                     child[0].setToolTip(reason or e.title)
                     row[0].appendRow(child)
-                    self.model.record_items[e.key] = child
+                    self.model.record_items[key] = child
+                self.model.appendRow(row)
             for p in self.orca:
                 row = [item(p["name"]), item("Orca"), item("등록"), item("—", 0), item("", 0), item("조회 전용"), item("앱에서 등록 해제")]
                 row[0].setData({"kind": "orca", "path": p["path"]}, NODE)
@@ -241,29 +256,36 @@ class App(QMainWindow, Logic):
                 row[0].setIcon(icon("folder"))
                 self.model.appendRow(row)
         finally:
+            self.proxy.setDynamicSortFilter(True)
+            self.tree.setUpdatesEnabled(True)
             self._updating = False
         self.size_delegate.total = sum(e.extra.get("display_size", 0) for e in self.entries)
         self.sync_checks()
         self.filter_records(self.search.text())
 
-    def sync_checks(self):
+    def sync_checks(self, force_keys=()):
         if not hasattr(self, "model"):
             return
         self._updating = True
         try:
-            for key, row in self.model.record_items.items():
+            changed = (self.checked ^ self._display_checked) | set(force_keys)
+            for key in changed:
+                row = self.model.record_items.get(key)
+                if row is None:
+                    continue
                 row[0].setCheckState(Qt.CheckState.Checked if key in self.checked else Qt.CheckState.Unchecked)
                 mark_row(row, key in self.checked)
             for group, row in self.model.group_items.items():
-                available = [e for e in self.groups[group] if self.can_select(e)]
-                count = sum(e.key in self.checked for e in available)
+                available = self._available_keys[group]
+                count = len(available & self.checked)
                 state = Qt.CheckState.Checked if available and count == len(available) else (Qt.CheckState.PartiallyChecked if count else Qt.CheckState.Unchecked)
                 row[0].setCheckState(state)
                 if row[6].isCheckable():
                     row[6].setCheckState(Qt.CheckState.Checked if self.workspace_of(group, self.groups[group]) in self.workspaces else Qt.CheckState.Unchecked)
         finally:
             self._updating = False
-        total = sum(e.extra.get("display_size", 0) for e in self.entries if e.key in self.checked)
+        self._display_checked = set(self.checked)
+        total = sum(self.entry_by_key[k].extra.get("display_size", 0) for k in self.checked if k in self.entry_by_key)
         self.selection_summary.setText(f"선택 {len(self.checked)}개 · 기록 파일 {readable_size(total)} (DB 공간 별도)")
         self.selection_sub.setText(f"작업 폴더 {len(self.workspaces)}개 함께 삭제 · 용량은 검토 단계에서 계산" if self.workspaces else "작업 폴더 보존")
         self.update_actions()
@@ -274,7 +296,11 @@ class App(QMainWindow, Logic):
         node = value.data(NODE) or {}
         state = value.checkState() != Qt.CheckState.Unchecked
         if node.get("kind") == "entry":
-            self.set_records_checked([self.entry_by_key[node["key"]]], state)
+            entry = self.entry_by_key[node["key"]]
+            if self.busy or not self.can_select(entry):
+                self.sync_checks(force_keys=[node["key"]])
+            else:
+                self.set_records_checked([entry], state)
         elif node.get("kind") == "project":
             group = tuple(node["group"])
             self.toggle_workspace(group, state) if value.column() == 6 else self.set_records_checked(self.groups[group], state, group)
@@ -320,8 +346,10 @@ class App(QMainWindow, Logic):
             self.detail_hint.setText("Orca 프로젝트 등록은 조회 전용입니다. 앱에서 등록 해제하세요.")
 
     def closeEvent(self, event):
-        if self.busy:
+        if self.busy or any(getattr(dialog, "_removing", False) for dialog in self.dialogs):
             event.ignore()
             message(self, "처리 중", "백업·삭제 결과를 확인한 뒤 창을 닫으세요.")
         else:
+            self._closing = True
+            self.startup_timer.stop()
             event.accept()

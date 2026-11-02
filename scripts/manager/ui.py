@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import queue
 import threading
+from time import monotonic
 import tkinter as tk
 from collections import defaultdict
 from datetime import datetime
@@ -21,16 +22,27 @@ CLOSE_HINT = {"Orca": "Orca 앱 전체 (안에서 실행 중인 Codex·Claude �
               "Gemini": "터미널의 gemini CLI"}
 
 
+def display_date(timestamp):
+    try:
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M") if timestamp else ""
+    except (OverflowError, OSError, ValueError):
+        return "날짜 오류"
+
+
 class App(tk.Tk):
     def __init__(self, roots=None, allow_delete=True):
         super().__init__()
         self.title("AI 기록 정리 · 프로젝트 / 대화 선택")
+        if os.name == "nt":
+            self.iconbitmap(default=str(Path(__file__).resolve().parents[2] / "app.ico"))
         self.geometry("1250x800")
         self.minsize(980, 620)
         self.roots, self.allow_delete = roots, allow_delete
         self.entries, self.checked, self.project_groups = [], set(), set()
         self.groups, self.rows, self.events = {}, {}, queue.Queue()
         self.busy = False
+        self._job_started, self._job_status = None, ""
+        self._review_info_active, self._review_info_pending = False, None
         self.running, self.processes, self.errors, self.orca = set(), [], [], []
         self.codex, self.backup_dir = "", DEFAULT_BACKUP_DIR
         self.workspaces, self.dirs, self.protected, self.pending = set(), {}, {}, []
@@ -91,15 +103,22 @@ class App(tk.Tk):
 
     def launch(self, function, event):
         if self.busy:
-            return
+            return False
         self.busy = True
+        self._job_started = monotonic()
+        self._job_status = self.status.get() if hasattr(self, "status") else "처리 중…"
         self.delete_button.state(["disabled"])
         def work():
             try:
                 self.events.put((event, function(), None))
-            except Exception as exc:
-                self.events.put((event, None, str(exc)))
-        threading.Thread(target=work, daemon=True).start()
+            except BaseException as exc:
+                self.events.put((event, None, str(exc) or type(exc).__name__))
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception as exc:
+            self.events.put((event, None, str(exc) or type(exc).__name__))
+            return False
+        return True
 
     def refresh(self):
         if self.busy:
@@ -127,13 +146,18 @@ class App(tk.Tk):
             except Exception as exc:
                 codex = f"찾지 못함: {exc}"
             dirs, protected, homes = {}, {}, ai_homes(entries)
+            seen = set()
             for e in entries:
-                if e.kind == "conversation" and Path(e.project).is_absolute() and path_key(e.project) not in dirs:
+                if e.kind == "conversation" and Path(e.project).is_absolute():
+                    k = path_key(e.project)
+                    if k in seen:
+                        continue
+                    seen.add(k)
                     if Path(e.project).is_dir():
-                        dirs[path_key(e.project)] = e.project
+                        dirs[k] = e.project
                         reason = fixed_problem(e.project, homes)
                         if reason:
-                            protected[path_key(e.project)] = reason
+                            protected[k] = reason
             return entries, errors, running, processes, projects, codex, dirs, protected
         self.launch(work, "scan")
 
@@ -141,10 +165,16 @@ class App(tk.Tk):
         try:
             while True:
                 event, result, error = self.events.get_nowait()
+                if event == "backup_info":
+                    self.finish_review_backup_info(result)
+                    continue
                 self.busy = False
+                self._job_started = None
                 if self.allow_delete:
                     self.delete_button.state(["!disabled"])
                 if error:
+                    if event == "scan":
+                        self.errors.append(error)
                     self.status.set("실패: " + error)
                     messagebox.showerror("작업 중단", error, parent=self)
                 elif event == "plan":
@@ -164,6 +194,7 @@ class App(tk.Tk):
                     self.status.set(text)
                 else:
                     archive, good, failed, notes = result
+                    self.status.set(f"정리 완료 · 성공 {len(good)}개 / 오류 {len(failed)}개 · 결과창을 닫으면 목록을 새로고칩니다.")
                     text = f"처리 성공 {len(good)}개 / 오류 {len(failed)}개\n백업: {archive}\n"
                     text += "".join(f"\n· {n}" for n in notes)
                     text += "".join(f"\n✕ {name}: {reason}" for name, reason in failed[:12])
@@ -171,7 +202,43 @@ class App(tk.Tk):
                     self.refresh()
         except queue.Empty:
             pass
-        self.after(150, self.poll)
+        except Exception as exc:
+            self.errors.append(f"화면 갱신 실패: {exc}")
+            self.status.set("실패: " + str(exc))
+            messagebox.showerror("작업 중단", str(exc), parent=self)
+        finally:
+            if self.busy and getattr(self, "_job_started", None) is not None:
+                seconds = max(0, int(monotonic() - self._job_started))
+                self.status.set(f"{self._job_status} ({seconds}초 경과)")
+            self.after(150, self.poll)
+
+    def load_review_backup_info(self, window, info, folder):
+        self._review_info_pending = (window, info, Path(folder))
+        if self._review_info_active:
+            return
+        request, self._review_info_pending = self._review_info_pending, None
+        self._review_info_active = True
+        def work():
+            try:
+                rows = list_backups(request[2])
+                text = f"이 위치의 기존 백업 {len(rows)}개 · {readable_size(sum(r[1] for r in rows))} ('백업 관리'에서 정리)"
+            except BaseException as exc:
+                text = f"백업 목록 조회 실패: {str(exc) or type(exc).__name__}"
+            self.events.put(("backup_info", (request, text), None))
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception as exc:
+            self.events.put(("backup_info", (request, f"백업 목록 조회 실패: {exc}"), None))
+
+    def finish_review_backup_info(self, result):
+        request, text = result
+        self._review_info_active = False
+        if self._review_info_pending is not None:
+            pending, self._review_info_pending = self._review_info_pending, None
+            if pending[0].winfo_exists():
+                self.load_review_backup_info(*pending)
+        elif request[0].winfo_exists():
+            request[1].set(text)
 
     def workspace_of(self, group, members):
         if all(e.kind == "cache" for e in members):
@@ -181,6 +248,9 @@ class App(tk.Tk):
 
     def is_running(self, e):
         return e.provider in self.running or ("orca" in str(e.home).lower() and "Orca" in self.running)
+
+    def can_select(self, e):
+        return not e.blocked and not self.is_running(e)
 
     def render(self):
         if not hasattr(self, "tree"):
@@ -204,17 +274,19 @@ class App(tk.Tk):
             ws = self.workspace_of(group, members)
             if not ws:
                 folder = ""
+            elif self.errors:
+                folder = "조회 오류로 차단"
             elif ws in self.protected:
                 folder = "보호됨"
             else:
                 folder = "☑ 함께 삭제" if ws in self.workspaces else "☐ 함께 삭제"
             self.tree.insert("", "end", iid=parent, text=f"{mark}  {label}", open=bool(query),
                              values=(group[0], f"{len(members)}개", readable_size(sum(e.extra.get("display_size", 0) for e in members)),
-                                     datetime.fromtimestamp(latest).strftime("%Y-%m-%d %H:%M") if latest else "", "프로젝트 묶음", folder))
+                                     display_date(latest), "조회 오류로 일괄 선택 차단" if self.errors else "프로젝트 묶음", folder))
             self.rows[parent] = ("project", group)
             for e in sorted(members, key=lambda x: x.updated, reverse=True):
                 locked = e.blocked or ("앱 종료 후 삭제" if self.is_running(e) else "선택 가능")
-                date = datetime.fromtimestamp(e.updated).strftime("%Y-%m-%d %H:%M") if e.updated else ""
+                date = display_date(e.updated)
                 title = " ".join(e.title.split())[:160]
                 self.tree.insert(parent, "end", iid=e.key, text=f"{'☑' if e.key in self.checked else '☐'}  {title}",
                                  values=(e.provider, "캐시" if e.kind == "cache" else "대화",
@@ -271,8 +343,11 @@ class App(tk.Tk):
             return
         expanded = {p for p in self.tree.get_children() if self.tree.item(p, "open")}
         kind, value = self.rows[row]
+        if kind == "project" and self.errors:
+            self.details.set("조회 오류가 있어 프로젝트 일괄 선택을 차단했습니다. 개별 대화만 선택할 수 있습니다.")
+            return
         # Blocked records can never be checked, so they must not decide the check state either.
-        members = [e for e in (self.groups[value] if kind == "project" else [value]) if not e.blocked]
+        members = [e for e in (self.groups[value] if kind == "project" else [value]) if self.can_select(e)]
         if not members:
             return
         remove = all(e.key in self.checked for e in members)
@@ -284,7 +359,7 @@ class App(tk.Tk):
             self.project_groups.discard(value.group)
         # A work folder stays marked only while every chat that worked in it is checked.
         for k in list(self.workspaces):
-            if any(e.key not in self.checked for e in conversations_in(self.dirs[k], self.entries) if not e.blocked):
+            if any(e.key not in self.checked for e in conversations_in(self.dirs[k], self.entries)):
                 self.workspaces.discard(k)
         self.render()
         for p in expanded:
@@ -293,6 +368,9 @@ class App(tk.Tk):
 
     def toggle_workspace(self, group):
         if self.busy:
+            return
+        if self.errors:
+            self.details.set("조회 오류가 있어 작업 폴더 삭제를 차단했습니다. 새로고침 후 오류를 확인하세요.")
             return
         k = self.workspace_of(group, self.groups[group])
         if not k:
@@ -307,13 +385,13 @@ class App(tk.Tk):
         else:
             members = conversations_in(path, self.entries)
             for e in members:
-                if not e.blocked:
+                if self.can_select(e):
                     self.checked.add(e.key)
             for g, ms in self.groups.items():
                 if all(m.key in self.checked for m in ms):
                     self.project_groups.add(g)
             self.workspaces.add(k)
-            locked = sum(bool(e.blocked) for e in members)
+            locked = sum(not self.can_select(e) for e in members)
             self.details.set(f"작업 폴더를 함께 삭제합니다: {path}\n이 폴더(하위 폴더 포함)에서 작업한 대화 {len(members)}개를 앱 구분 없이 모두 선택했습니다."
                              + (f" 선택할 수 없는 대화 {locked}개가 있어 검토 단계에서 폴더가 제외됩니다." if locked else ""))
         self.render_keep_open()
@@ -355,7 +433,7 @@ class App(tk.Tk):
             rows = list_backups(Path(folder.get()))
             for p, size, mtime in rows:
                 tree.insert("", "end", iid=str(p), text=p.name,
-                            values=(readable_size(size), datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")))
+                            values=(readable_size(size), display_date(mtime)))
             summary.set(f"백업 {len(rows)}개 · 합계 {readable_size(sum(r[1] for r in rows))}. 선택한 백업은 휴지통을 거치지 않고 바로 삭제됩니다.")
         def remove():
             if not self.allow_delete:
@@ -392,7 +470,10 @@ class App(tk.Tk):
     def review(self):
         if self.busy or not self.allow_delete:
             return
-        selected = [e for e in self.entries if e.key in self.checked]
+        if self.errors and (self.project_groups or self.workspaces):
+            messagebox.showerror("삭제 차단", "조회 오류가 있어 프로젝트·작업 폴더 삭제를 차단했습니다.", parent=self)
+            return
+        selected = [e for e in self.entries if e.key in self.checked and self.can_select(e)]
         if not selected:
             messagebox.showinfo("선택 필요", "정리할 프로젝트 또는 대화를 체크하세요.", parent=self)
             return
@@ -441,9 +522,9 @@ class App(tk.Tk):
         ttk.Label(bar, text="삭제 전 백업 위치:").pack(side="left")
         ttk.Entry(bar, textvariable=destination).pack(side="left", fill="x", expand=True, padx=8)
         ttk.Button(bar, text="변경", command=lambda: destination.set(filedialog.askdirectory(parent=window) or destination.get())).pack(side="left")
-        existing = list_backups(Path(destination.get()))
-        ttk.Label(window, padding=(15, 0), foreground="#666666",
-                  text=f"이 위치의 기존 백업 {len(existing)}개 · {readable_size(sum(r[1] for r in existing))} ('백업 관리'에서 정리)").pack(anchor="w")
+        backup_info = tk.StringVar(value="백업 목록을 읽는 중…")
+        ttk.Label(window, padding=(15, 0), foreground="#666666", textvariable=backup_info).pack(anchor="w")
+        self.load_review_backup_info(window, backup_info, Path(destination.get()))
         caches = [e for e in selected if e.kind == "cache"]
         with_caches = tk.BooleanVar(value=False)
         if caches:
@@ -458,16 +539,16 @@ class App(tk.Tk):
             ttk.Checkbutton(window, variable=moved,
                             text=f"작업 폴더 {len(eligible)}개({total})의 결과물을 실제 사용할 폴더로 옮겼거나 필요 없음을 확인했습니다.").pack(anchor="w", padx=15, pady=(8, 0))
         def apply():
+            if self.busy or not self.allow_delete:
+                return
+            if (self.errors and (self.project_groups or eligible)) or any(not self.can_select(e) for e in selected):
+                messagebox.showerror("삭제 차단", "조회 오류 또는 실행 중인 앱을 확인하고 새로고침하세요.", parent=window)
+                return
             if not agreed.get() or not destination.get().strip():
                 messagebox.showinfo("확인 필요", "작업 종료·결과물 보관 여부와 백업 위치를 확인하세요.", parent=window)
                 return
             if eligible and not moved.get():
                 messagebox.showinfo("확인 필요", "작업 폴더의 결과물을 옮겼는지 확인하세요.", parent=window)
-                return
-            try:
-                expected = {e.key: signature(e) for e in selected}
-            except Exception as exc:
-                messagebox.showerror("검사 실패", str(exc), parent=window)
                 return
             groups = set(self.project_groups)
             dest = Path(destination.get()).expanduser()
@@ -477,7 +558,10 @@ class App(tk.Tk):
             self.status.set("백업 검증 후 선택한 기록을 정리하는 중…")
             folders = [i["path"] for i in eligible]
             everything = list(self.entries)
-            self.launch(lambda: delete(selected, expected, dest, groups, include_caches=include,
-                                       workspaces=folders, all_entries=everything), "delete")
+            def work():
+                expected = {e.key: signature(e) for e in selected}
+                return delete(selected, expected, dest, groups, include_caches=include,
+                              workspaces=folders, all_entries=everything)
+            self.launch(work, "delete")
         ttk.Button(window, text="백업 후 선택 기록 삭제", command=apply).pack(anchor="e", padx=15, pady=15)
         window.grab_set()

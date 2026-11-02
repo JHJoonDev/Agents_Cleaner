@@ -40,9 +40,11 @@ def fixed_problem(path, homes=()):
     p = Path(path)
     if not p.is_absolute():
         return "절대 경로가 아님"
+    if ".." in p.parts:
+        return "상위 경로 참조는 허용하지 않음"
     if not p.is_dir():
         return "폴더가 없음"
-    if is_link(p) or key(p.resolve()) != key(p):
+    if any(is_link(part) for part in (p, *p.parents)) or key(p.resolve()) != key(p):
         return "링크·junction 경로"
     if key(p) == key(p.anchor):
         return "드라이브 루트"
@@ -63,7 +65,8 @@ def fixed_problem(path, homes=()):
         if value and under(p, value):
             return "설치된 프로그램·시스템 폴더 안"
     for h in homes:
-        if under(p, h) or under(h, p):
+        resolved = Path(h).resolve()
+        if under(p, h) or under(h, p) or under(p, resolved) or under(resolved, p):
             return "AI 앱 저장소와 겹침"
     if under(PROGRAM_ROOT, p):
         return "이 정리 프로그램이 들어 있는 폴더"
@@ -109,8 +112,8 @@ def git_warnings(path):
         count = sum(line.startswith("worktree ") for line in listed.splitlines())
         if count > 1:
             warnings.append(f"이 저장소를 쓰는 다른 git worktree {count - 1}개가 함께 망가짐")
-    except Exception:
-        pass
+    except Exception as exc:
+        warnings.append(f"다른 git worktree 확인 실패: {str(exc)[:120]}")
     return warnings
 
 

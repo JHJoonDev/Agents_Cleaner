@@ -4,6 +4,8 @@ import os
 import uuid
 from pathlib import Path
 
+from .model import is_link
+
 
 class GUID(ctypes.Structure):
     _fields_ = [("data1", ctypes.c_uint32), ("data2", ctypes.c_uint16),
@@ -17,6 +19,14 @@ class GUID(ctypes.Structure):
 def recycle(path: Path):
     if os.name != "nt":
         raise RuntimeError("휴지통 이동은 Windows에서만 지원")
+    path = Path(path)
+    if not path.is_absolute() or path == Path(path.anchor) or ".." in path.parts:
+        raise ValueError("휴지통 대상은 루트가 아닌 절대 경로여야 함")
+    if not path.exists() or any(is_link(part) for part in (path, *path.parents)):
+        raise ValueError("없는 대상 또는 링크·junction 경로는 이동하지 않음")
+    if ":" in str(path)[len(path.drive):]:
+        raise ValueError("대체 데이터 스트림 경로는 이동하지 않음")
+    before = path.lstat()
     absolute = str(path.absolute())
     # No UNC/network or removable targets with unreliable recycle-bin semantics.
     kernel = ctypes.windll.kernel32
@@ -60,6 +70,11 @@ def recycle(path: Path):
         shell_interface = GUID.parse("43826d1e-e718-42ee-bc55-a1e261c37bfe")
         check(shell.SHCreateItemFromParsingName(absolute, None, ctypes.byref(shell_interface), ctypes.byref(item)))
         method(operation, 18, [pointer, pointer], item, None)
+        current = path.lstat()
+        if (current.st_dev, current.st_ino, current.st_mtime_ns) != (before.st_dev, before.st_ino, before.st_mtime_ns):
+            raise RuntimeError("휴지통 이동 직전 대상이 변경됨")
+        if any(is_link(part) for part in (path, *path.parents)):
+            raise RuntimeError("휴지통 이동 직전 링크·junction으로 변경됨")
         method(operation, 21, [])
         aborted = ctypes.c_int()
         method(operation, 22, [ctypes.POINTER(ctypes.c_int)], ctypes.byref(aborted))
