@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .model import is_link, tree_files
 from .providers import profile_roots
+from .herdr import protected_homes
 from .runtime import command
 
 PROGRAM_ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +33,7 @@ def ai_homes(entries=()):
     roaming = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
     homes = {e.home for e in entries} | {p for _, p in profile_roots()} | {roaming / "orca"}
     home = Path.home()
-    return homes | {home / ".codex", home / ".claude", home / ".gemini"}
+    return homes | protected_homes() | {home / ".codex", home / ".claude", home / ".gemini"}
 
 
 def fixed_problem(path, homes=()):

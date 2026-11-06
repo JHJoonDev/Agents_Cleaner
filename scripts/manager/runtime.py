@@ -17,7 +17,14 @@ try:
 except ImportError:
     psutil = None
 
-PROVIDERS = {"Codex", "Claude", "Gemini", "Orca"}
+PROVIDERS = {"Codex", "Claude", "Gemini", "Orca", "Herdr"}
+
+
+def entry_running(entry, live):
+    return (entry.provider in live or ("orca" in str(entry.home).lower() and "Orca" in live)
+            or ("Herdr" in live and entry.provider in {"Codex", "Claude", "Gemini"}))
+
+
 _discovery_lock = threading.Lock()
 _orca_lock = threading.Lock()
 _orca_cache = None
@@ -262,6 +269,8 @@ def _process_app(name, cmdline=""):
         return "Claude"
     if name == "orca.exe":
         return "Orca"
+    if name in {"herdr.exe", "herdr-app.exe", "herdr-core.exe", "hc.exe"}:
+        return "Herdr"
     if name == "node.exe":
         for package, app in (("@google/gemini-cli", "Gemini"), ("@anthropic-ai/claude-code", "Claude"),
                              ("@openai/codex", "Codex")):
@@ -302,7 +311,7 @@ def running_processes():
         return _native_processes()
     script = r"""
     $ErrorActionPreference = 'Stop'
-    $filter = "Name = 'codex.exe' OR Name LIKE 'claude%.exe' OR Name = 'orca.exe' OR Name = 'node.exe'"
+    $filter = "Name = 'codex.exe' OR Name LIKE 'claude%.exe' OR Name = 'orca.exe' OR Name = 'node.exe' OR Name = 'herdr.exe' OR Name = 'herdr-app.exe' OR Name = 'herdr-core.exe' OR Name = 'hc.exe'"
     $found = @(Get-CimInstance Win32_Process -Filter $filter | ForEach-Object {
       $n = $_.Name.ToLowerInvariant()
       $c = [string]$_.CommandLine
@@ -310,6 +319,7 @@ def running_processes():
       if ($n -eq 'codex.exe') { $app = 'Codex' }
       elseif ($n -match '^claude.*\.exe$') { $app = 'Claude' }
       elseif ($n -eq 'orca.exe') { $app = 'Orca' }
+      elseif ($n -in @('herdr.exe', 'herdr-app.exe', 'herdr-core.exe', 'hc.exe')) { $app = 'Herdr' }
       elseif ($n -eq 'node.exe') {
         if (-not $c) { throw 'Cannot inspect node command line' }
         if ($c -match '@google[\\/]gemini-cli') { $app = 'Gemini' }

@@ -245,7 +245,7 @@ def benchmark(case):
                     fixture.entries, expected, fixture.destination,
                     detector=meter.wrap("detector_simulated", lambda: set()), runner=simulated_command,
                     recycler=meter.wrap("recycle_simulated", fixture.recycle),
-                    include_caches=case.cache_mode == "include", all_entries=fixture.entries)
+                    include_caches=case.cache_mode == "include", all_entries=fixture.entries, create_backup=True)
         verification_error = ""
         remaining = None
         try:

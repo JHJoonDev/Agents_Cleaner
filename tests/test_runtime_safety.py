@@ -221,7 +221,7 @@ class MutationSafetyTests(unittest.TestCase):
     def delete(self, **kwargs):
         return ops.delete([self.entry], {self.entry.key: signature(self.entry)},
                           kwargs.pop("destination", self.destination), detector=kwargs.pop("detector", lambda: set()),
-                          recycler=self.recycler, **kwargs)
+                          recycler=self.recycler, **kwargs, create_backup=True)
 
     def junction(self, path, target):
         if os.name != "nt":
@@ -373,7 +373,7 @@ class MutationSafetyTests(unittest.TestCase):
         with patch.object(ops, "_project_state", wraps=ops._project_state) as measured:
             _, good, failed, _ = ops.delete([self.entry, second],
                 {e.key: signature(e) for e in (self.entry, second)}, self.destination,
-                project_groups=[self.entry.group], detector=lambda: set(), recycler=self.recycler)
+                project_groups=[self.entry.group], detector=lambda: set(), recycler=self.recycler, create_backup=True)
         self.assertEqual(len(good), 2)
         self.assertFalse(failed)
         self.assertEqual(measured.call_count, 2)  # One initial sample, one pre-removal comparison.
@@ -426,7 +426,7 @@ class MutationSafetyTests(unittest.TestCase):
         detector = Mock(side_effect=[set(), TimeoutError("probe failed")])
         _, good, failed, _ = ops.delete([self.entry, second],
             {e.key: signature(e) for e in (self.entry, second)}, self.destination,
-            detector=detector, recycler=self.recycler)
+            detector=detector, recycler=self.recycler, create_backup=True)
         self.assertFalse(good)
         self.assertEqual(len(failed), 2)
         self.assertEqual(detector.call_count, 2)
@@ -626,7 +626,7 @@ def benchmark_delete(provider="Claude", count=50, memory_files=10, cli_delay=0, 
             started = time.perf_counter()
             archive, good, failed, notes = operation.delete(entries, expected, root / "backups",
                 project_groups=[entries[0].group], detector=timed("process_recheck", detector),
-                runner=operation.command, recycler=timed("recycle", recycler))
+                runner=operation.command, recycler=timed("recycle", recycler), create_backup=True)
             elapsed = time.perf_counter() - started
         runtime.codex_cli.cache_clear()
         with ops.zipfile.ZipFile(archive) as check:

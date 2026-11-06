@@ -263,30 +263,13 @@ class StartupPerfTests(unittest.TestCase):
         self.assertEqual(dialog.tree.topLevelItem(0).data(0, Qt.ItemDataRole.UserRole),
                          str(self.root / "39" / "fixture.zip"))
 
-    def test_review_reader_failure_is_displayed_and_closed_dialog_ignores_completion(self):
-        with patch("manager.qt_dialogs.operations.list_backups", side_effect=PermissionError("fixture denied")):
+    def test_review_does_not_read_backup_storage(self):
+        with patch("manager.qt_dialogs.operations.list_backups", side_effect=PermissionError("fixture denied")) as reader:
             dialog = ReviewDialog(self.entries(1), [], self.root, allow_delete=False, parent=self.window)
             self.dialogs.append(dialog)
-            self.wait(lambda: not dialog._reads)
-            self.assertIn("fixture denied", dialog.backup_info.text())
+            self.assertFalse(dialog._reads)
             self.assertFalse(dialog.confirm_button.isEnabled())
-        entered, release = threading.Event(), threading.Event()
-
-        def held_reader(_):
-            entered.set()
-            release.wait(5)
-            return []
-
-        with patch("manager.qt_dialogs.operations.list_backups", side_effect=held_reader):
-            try:
-                dialog.update_backup_info()
-                self.wait(entered.is_set)
-                dialog.reject()
-                before = dialog.backup_info.text()
-            finally:
-                release.set()
-                self.wait(lambda: not dialog._reads)
-        self.assertEqual(dialog.backup_info.text(), before)
+            reader.assert_not_called()
 
     def test_destroyed_backup_dialog_does_not_receive_late_worker_result(self):
         entered, release, exited = threading.Event(), threading.Event(), threading.Event()

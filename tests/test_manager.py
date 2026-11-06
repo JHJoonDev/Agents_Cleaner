@@ -51,7 +51,7 @@ class StorageTests(unittest.TestCase):
     def apply(self, entries, groups=(), **kwargs):
         expected = {e.key: signature(e) for e in entries}
         archive, good, failed, self.notes = delete(entries, expected, self.dest, groups, detector=lambda: set(),
-                                                   recycler=self.recycle, **kwargs)
+                                                   recycler=self.recycle, **kwargs, create_backup=True)
         return archive, good, failed
 
     def test_only_checked_session_deleted_original_auth_and_other_chat_preserved(self):
@@ -109,7 +109,7 @@ class StorageTests(unittest.TestCase):
     def test_active_app_blocked_before_any_backup_or_delete(self):
         e = self.claude(1)[0]
         with self.assertRaises(RuntimeError):
-            delete([e], {e.key: signature(e)}, self.dest, detector=lambda: {"Claude"}, recycler=self.recycle)
+            delete([e], {e.key: signature(e)}, self.dest, detector=lambda: {"Claude"}, recycler=self.recycle, create_backup=True)
         self.assertFalse(self.dest.exists())
         self.assertTrue(e.files[0].exists())
 
@@ -118,14 +118,14 @@ class StorageTests(unittest.TestCase):
         old = signature(e)
         e.files[0].write_text("changed chat", encoding="utf8")
         with self.assertRaises(ValueError):
-            delete([e], {e.key: old}, self.dest, detector=lambda: set(), recycler=self.recycle)
+            delete([e], {e.key: old}, self.dest, detector=lambda: set(), recycler=self.recycle, create_backup=True)
         self.assertTrue(e.files[0].exists())
 
     def test_app_restarting_after_backup_prevents_delete(self):
         e = self.claude(1)[0]
         calls = iter([set(), {"Claude"}])
         archive, good, failed, _ = delete([e], {e.key: signature(e)}, self.dest,
-                                         detector=lambda: next(calls), recycler=self.recycle)
+                                         detector=lambda: next(calls), recycler=self.recycle, create_backup=True)
         self.assertTrue(archive.exists())
         self.assertFalse(good)
         self.assertTrue(failed)
@@ -333,7 +333,7 @@ class StorageTests(unittest.TestCase):
         e = self.claude(1)[0]
         calls = iter([set(), {"Claude"}])
         _, good, failed, _ = delete([e], {e.key: signature(e)}, self.dest, detector=lambda: next(calls),
-                                    recycler=self.recycle, workspaces=[str(self.original)])
+                                    recycler=self.recycle, workspaces=[str(self.original)], create_backup=True)
         self.assertFalse(good)
         self.assertTrue((self.original / "source.py").exists())
 

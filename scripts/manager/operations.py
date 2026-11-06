@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .model import ClosingConnection, Entry, inside, is_link, read_db, safe_path, signature
 from .providers import CACHES, valid_id
-from .runtime import PROVIDERS, active_providers, command
+from .runtime import PROVIDERS, active_providers, command, entry_running
 from .recycle import recycle
 from .workspaces import ai_homes, conversations_in, fixed_problem, workspace_problem
 
@@ -93,11 +93,11 @@ def _stopped(detector, entries, workspace=False):
     live = detector()
     if not isinstance(live, (set, frozenset)) or not live.issubset(PROVIDERS):
         raise RuntimeError("실행 상태를 확인하지 못해 삭제를 차단함")
-    if workspace and "Orca" in live:
-        raise RuntimeError("Orca가 실행 중이어서 작업 폴더를 보존함")
+    if workspace and live & {"Orca", "Herdr"}:
+        raise RuntimeError("Orca 또는 Herdr가 실행 중이어서 작업 폴더를 보존함")
     for entry in entries:
-        if entry.provider in live or ("orca" in str(entry.home).lower() and "Orca" in live):
-            raise RuntimeError(f"{entry.provider} 또는 Orca가 실행 중임. 앱과 CLI를 닫은 뒤 삭제")
+        if entry_running(entry, live):
+            raise RuntimeError(f"{entry.provider}, Orca 또는 Herdr가 실행 중임. 앱과 CLI를 닫은 뒤 삭제")
 
 
 def _snapshot_database(source, target, timeout=8):
@@ -112,7 +112,7 @@ def _snapshot_database(source, target, timeout=8):
 
 def validate(entry: Entry):
     if entry.provider not in PROVIDERS or entry.kind not in {"cache", "conversation"} or (
-            entry.provider == "Orca" and entry.kind != "cache"):
+            entry.provider in {"Orca", "Herdr"} and entry.kind != "cache"):
         raise ValueError("지원하지 않는 정리 대상")
     _no_links(entry.home)
     if entry.blocked:
@@ -303,8 +303,8 @@ def validate_project_folder(entry, folder):
 
 
 @_exclusive
-def delete(entries, expected, destination, project_groups=(), detector=active_providers, runner=command,
-           recycler=recycle, include_caches=True, workspaces=(), all_entries=None):
+def delete(entries, expected, destination=None, project_groups=(), detector=active_providers, runner=command,
+           recycler=recycle, include_caches=True, workspaces=(), all_entries=None, create_backup=False):
     if not entries:
         raise ValueError("선택한 항목 없음")
     entries, workspaces, project_groups = list(entries), tuple(workspaces), set(project_groups)
@@ -330,9 +330,11 @@ def delete(entries, expected, destination, project_groups=(), detector=active_pr
             folder = Path(e.extra["project_dir"])
             validate_project_folder(e, folder)
             project_states[e.group] = _project_state(folder, e.home, entries, removed_paths)
-    archive = backup(entries, Path(destination), project_groups, include_caches, workspaces)
-    archive_state = _identity(archive)
+    archive = backup(entries, Path(destination), project_groups, include_caches, workspaces) if create_backup else None
+    archive_state = _identity(archive) if archive is not None else None
     def check_archive():
+        if archive is None:
+            return
         _no_links(archive)
         if _identity(archive) != archive_state:
             raise ValueError("검증된 백업이 변경되어 삭제를 중단함")
@@ -356,7 +358,7 @@ def delete(entries, expected, destination, project_groups=(), detector=active_pr
             # actual mutation boundary (CLI before_run or each recycle call).
             validate(e)
             if signature(e) != expected[e.key]:
-                raise ValueError("백업 중 파일이 변경됨")
+                raise ValueError("삭제 준비 중 파일이 변경됨")
             check_archive()
             if e.provider == "Codex" and e.kind == "conversation":
                 env = os.environ.copy()

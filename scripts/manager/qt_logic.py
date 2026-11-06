@@ -8,7 +8,7 @@ from PySide6.QtCore import QThreadPool, QTimer, Slot, Qt
 from . import operations
 from .model import signature
 from .providers import scan
-from .runtime import codex_cli, orca_projects, running_processes
+from .runtime import PROVIDERS, codex_cli, entry_running, orca_projects, running_processes
 from .workspaces import ai_homes, conversations_in, fixed_problem, key as path_key, plan_workspaces
 from .qt_dialogs import BackupDialog, ProcessesDialog, ResultDialog, ReviewDialog
 from .qt_models import Task
@@ -65,7 +65,7 @@ class Logic:
                 running = {p["app"] for p in processes}
             except Exception as exc:
                 errors.append(str(exc))
-                processes, running = [], {"Codex", "Claude", "Gemini", "Orca"}
+                processes, running = [], set(PROVIDERS)
             projects = []
             if self.roots is None:
                 try:
@@ -144,7 +144,7 @@ class Logic:
                 dialog.deleteLater()
 
     def is_running(self, e):
-        return e.provider in self.running or ("orca" in str(e.home).lower() and "Orca" in self.running)
+        return entry_running(e, self.running)
 
     def can_select(self, e):
         return not e.blocked and not self.is_running(e)
@@ -270,11 +270,9 @@ class Logic:
         if any(not self.can_select(e) for e in selected):
             message(self, "삭제 차단", "실행 중이거나 차단된 항목이 있습니다. 새로고침 후 확인하세요.")
             return
-        self.backup_dir = payload["destination"]
-        self.status_text.setText("백업 검증 후 선택한 기록을 정리하는 중…")
+        self.status_text.setText("선택한 기록을 정리하는 중…")
         def work():
             expected = {e.key: signature(e) for e in selected}
-            return operations.delete(selected, expected, self.backup_dir, groups,
-                                     include_caches=payload["include_caches"],
+            return operations.delete(selected, expected, project_groups=groups,
                                      workspaces=payload["workspaces"], all_entries=everything)
         self.launch(work, "delete")

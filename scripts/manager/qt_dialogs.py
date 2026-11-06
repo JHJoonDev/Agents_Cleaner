@@ -133,27 +133,10 @@ class ReviewDialog(AsyncDialog):
             row.setTextAlignment(2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.targets.addTopLevelItem(row)
         outer.addWidget(self.targets, 1)
-        methods = "Codex: 공식 삭제 명령 + 대화 원문·DB 백업. 프로젝트 등록은 보존합니다.\nClaude·Gemini: 휴지통으로 이동. Claude 프로젝트 메모리는 보존합니다. 앱 실행 중에는 삭제를 차단합니다."
+        methods = "백업을 만들지 않습니다. Codex 대화는 공식 명령으로 영구 삭제하며 복구할 수 없습니다.\nClaude·Gemini 대화와 캐시·로그는 휴지통으로 이동합니다. 프로젝트 등록·메모리는 보존하며, 앱 실행 중에는 삭제를 차단합니다."
         if any(e.provider == "Codex" for e in selected):
             methods += f"\n사용할 Codex CLI: {codex}"
         outer.addWidget(label(methods, muted=True, wrap=True))
-        backup_row = QHBoxLayout()
-        backup_row.addWidget(label("삭제 전 백업 위치:"))
-        self.destination = QLineEdit(str(destination))
-        self.destination.setFont(QFont("Consolas", 9))
-        backup_row.addWidget(self.destination, 1)
-        button("변경…", self.choose_destination, backup_row)
-        outer.addLayout(backup_row)
-        self.backup_info = label(muted=True)
-        outer.addWidget(self.backup_info)
-        self.cache_backup = QCheckBox("캐시·로그도 백업")
-        caches = [e for e in selected if e.kind == "cache"]
-        if caches:
-            self.cache_backup.setText(textwrap.fill(f"캐시·로그도 백업 ({readable_size(sum(e.extra.get('display_size', 0) for e in caches))}). 앱이 다시 만드는 파일이라 보통은 필요 없습니다.", width=64))
-            outer.addWidget(self.cache_backup)
-        else:
-            self.cache_backup.hide()
-        self.cache_backup.setChecked(False)
         self.agreed = QCheckBox(textwrap.fill("선택 작업이 종료되었고, 필요한 결과물은 보관했거나 필요 없음을 확인했습니다.", width=64))
         outer.addWidget(self.agreed)
         self.moved = QCheckBox()
@@ -165,36 +148,16 @@ class ReviewDialog(AsyncDialog):
             self.moved.hide()
         actions = QHBoxLayout()
         actions.addStretch()
-        self.confirm_button = button("백업 후 선택 기록 삭제", self.confirm, actions)
+        self.confirm_button = button("선택 기록 삭제", self.confirm, actions)
         self.cancel_button = button("취소", self.reject, actions)
         self.cancel_button.setDefault(True)
         outer.addLayout(actions)
         self.agreed.toggled.connect(self.update_enabled)
         self.moved.toggled.connect(self.update_enabled)
-        self.destination.textChanged.connect(self.update_enabled)
-        self.destination.editingFinished.connect(self.update_backup_info)
-        self.update_backup_info()
         self.update_enabled()
 
-    def choose_destination(self):
-        value = QFileDialog.getExistingDirectory(self, "백업 폴더", self.destination.text())
-        if value:
-            self.destination.setText(value)
-            self.update_backup_info()
-
-    def update_backup_info(self):
-        folder = Path(self.destination.text())
-        self.backup_info.setText("백업 목록을 읽는 중…")
-        self._start_read(lambda: operations.list_backups(folder), self._backup_info_ready)
-
-    def _backup_info_ready(self, rows, error):
-        if error:
-            self.backup_info.setText(f"백업 목록 조회 실패: {error}")
-        else:
-            self.backup_info.setText(f"이 위치의 기존 백업 {len(rows)}개 · {readable_size(sum(r[1] for r in rows))} (백업 관리에서 정리)")
-
     def update_enabled(self, *_):
-        valid = not self._submitted and self.allow_delete and bool(self.selected) and bool(self.destination.text().strip())
+        valid = not self._submitted and self.allow_delete and bool(self.selected)
         self.confirm_button.setEnabled(valid and self.agreed.isChecked() and (not self.eligible or self.moved.isChecked()))
 
     def confirm(self):
@@ -205,9 +168,7 @@ class ReviewDialog(AsyncDialog):
             return
         self._submitted = True
         self.confirm_button.setEnabled(False)
-        self.requested.emit({"destination": Path(self.destination.text()).expanduser(),
-                             "include_caches": self.cache_backup.isChecked(),
-                             "workspaces": [i["path"] for i in self.eligible]})
+        self.requested.emit({"workspaces": [i["path"] for i in self.eligible]})
         self.accept()
 
 
@@ -323,7 +284,7 @@ class ProcessesDialog(QDialog):
         if processes:
             text = "아래 프로그램을 모두 닫은 뒤 '새로고침'을 누르세요.\nOrca 터미널 안에서 실행했다면 Orca를 닫고 탐색기에서 실행.cmd를 다시 실행하세요."
         else:
-            text = "실행 중인 Codex·Claude·Gemini·Orca 프로세스가 없습니다." if not running else "실행 상태를 확인하지 못해 모든 앱을 실행 중으로 간주합니다."
+            text = "실행 중인 Codex·Claude·Gemini·Orca·Herdr 프로세스가 없습니다." if not running else "실행 상태를 확인하지 못해 모든 앱을 실행 중으로 간주합니다."
         outer.addWidget(label(text, wrap=True))
         self.tree = table(["앱", "프로세스", "PID", "실행 파일"])
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
@@ -337,7 +298,7 @@ class ProcessesDialog(QDialog):
             row.setToolTip(3, p.get("path") or "")
             self.tree.addTopLevelItem(row)
         outer.addWidget(self.tree, 1)
-        outer.addWidget(label("Orca: 앱 전체(내부 Codex·Claude 포함) / Codex: 앱·CLI / Claude: 데스크톱·Claude Code / Gemini: CLI", muted=True, wrap=True))
+        outer.addWidget(label("Orca: 앱 전체(내부 Codex·Claude 포함) / Codex: 앱·CLI / Claude: 데스크톱·Claude Code / Gemini: CLI / Herdr: 앱·core 서버 (창 종료 후에도 서버 유지: hc server stop)", muted=True, wrap=True))
         row = QHBoxLayout()
         row.addStretch()
         button("닫기", self.reject, row)
@@ -354,7 +315,7 @@ class ResultDialog(QDialog):
         outer.addWidget(label(f"처리 성공 {len(good)}개 / 오류 {len(failed)}개"))
         output = QPlainTextEdit()
         output.setReadOnly(True)
-        output.setPlainText(f"백업: {archive}\n" + "".join(f"\n· {n}" for n in notes) + "".join(f"\n✕ {name}: {reason}" for name, reason in failed))
+        output.setPlainText((f"백업: {archive}\n" if archive else "백업 없이 처리했습니다.\n") + "".join(f"\n· {n}" for n in notes) + "".join(f"\n✕ {name}: {reason}" for name, reason in failed))
         outer.addWidget(output)
         row = QHBoxLayout()
         row.addStretch()

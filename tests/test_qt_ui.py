@@ -140,17 +140,20 @@ class QtSmokeTests(unittest.TestCase):
             delete.assert_not_called()
             remove.assert_not_called()
 
-    def test_confirmation_two_checks_and_cache_default(self):
+    def test_confirmation_requires_two_checks_without_backup_settings(self):
         plan = [{"path": str(self.project), "size": 13, "files": 1, "warnings": ["fixture git warning"], "problem": ""}]
         dialog = ReviewDialog(self.window.entries, plan, self.window.backup_dir, parent=self.window)
-        self.assertFalse(dialog.cache_backup.isChecked())
+        self.assertFalse(hasattr(dialog, "cache_backup"))
+        self.assertFalse(hasattr(dialog, "destination"))
         self.assertFalse(dialog.confirm_button.isEnabled())
         dialog.agreed.setChecked(True)
         self.assertFalse(dialog.confirm_button.isEnabled())
         dialog.moved.setChecked(True)
         self.assertTrue(dialog.confirm_button.isEnabled())
-        dialog.destination.clear()
-        self.assertFalse(dialog.confirm_button.isEnabled())
+        payloads = []
+        dialog.requested.connect(payloads.append)
+        dialog.confirm()
+        self.assertEqual(payloads, [{"workspaces": [str(self.project)]}])
         dialog.reject()
 
     def test_scan_and_workspace_plan_run_off_gui_thread(self):
@@ -193,7 +196,7 @@ class QtSmokeTests(unittest.TestCase):
         groups = {e.group for e in selected}
         everything = list(self.window.entries)
         self.window.set_records_checked(selected, True)
-        payload = {"destination": self.window.backup_dir, "include_caches": False, "workspaces": []}
+        payload = {"workspaces": []}
         result = (self.root / "fixture.zip", selected, [], ["fixture note"])
         with patch("manager.operations.delete", return_value=result) as backend, patch("manager.qt_logic.ResultDialog") as output:
             self.window.submit_review(selected, groups, everything, payload)
@@ -202,9 +205,9 @@ class QtSmokeTests(unittest.TestCase):
             args, kwargs = backend.call_args
             self.assertEqual(args[0], selected)
             self.assertEqual(set(args[1]), {e.key for e in selected})
-            self.assertEqual(args[2], self.window.backup_dir)
-            self.assertEqual(args[3], groups)
-            self.assertFalse(kwargs["include_caches"])
+            self.assertEqual(len(args), 2)
+            self.assertEqual(kwargs["project_groups"], groups)
+            self.assertNotIn("create_backup", kwargs)
             self.assertEqual(kwargs["workspaces"], [])
             self.assertEqual(kwargs["all_entries"], everything)
             output.assert_called_once_with(result, self.window)

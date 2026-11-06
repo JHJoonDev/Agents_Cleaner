@@ -228,7 +228,7 @@ class DeletionAdversarialTests(FixtureCase):
         with self.assertRaises(ValueError):
             operations.delete([entry], {entry.key: signature(entry)}, self.project / "backups",
                               detector=lambda: set(), recycler=recycler,
-                              workspaces=[str(self.project)], all_entries=[entry])
+                              workspaces=[str(self.project)], all_entries=[entry], create_backup=True)
         recycler.assert_not_called()
         self.assertTrue(entry.files[0].exists())
 

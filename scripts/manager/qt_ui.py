@@ -234,7 +234,7 @@ class App(QMainWindow, Logic):
                 for e in members:
                     date = display_date(e.updated)
                     key = e.key
-                    child = [item(" ".join(e.title.split())[:160]), item(e.provider), item("캐시" if e.kind == "cache" else "대화"),
+                    child = [item(" ".join(e.title.split())[:160]), item(e.provider), item("캐시" if e.kind == "cache" else ("터미널" if e.provider == "Herdr" else "대화")),
                              size_item(e.extra.get("display_size", 0), bool(e.files)), item(date, e.updated, True), item(), item()]
                     child[0].setData({"kind": "entry", "key": key}, NODE)
                     child[0].setIcon(icon("file"))
@@ -348,7 +348,7 @@ class App(QMainWindow, Logic):
     def closeEvent(self, event):
         if self.busy or any(getattr(dialog, "_removing", False) for dialog in self.dialogs):
             event.ignore()
-            message(self, "처리 중", "백업·삭제 결과를 확인한 뒤 창을 닫으세요.")
+            message(self, "처리 중", "삭제 결과를 확인한 뒤 창을 닫으세요.")
         else:
             self._closing = True
             self.startup_timer.stop()

@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .model import Entry, _link_stat, read_db, read_json
+from .herdr import storage_root, terminals
 
 
 SCAN_ERRORS = (OSError, ValueError, KeyError, TypeError, sqlite3.Error, RuntimeError)
@@ -288,13 +289,20 @@ def profile_roots(user_home=None, roaming=None, errors=None):
 # Only unambiguous runtime caches. Gemini tmp contains conversations: never bulk-delete it.
 CACHES = {"Codex": [".tmp", "tmp", "log", "cache"],
           "Claude": ["cache", "shell-snapshots", "paste-cache"], "Gemini": [],
-          "Orca": ["Cache", "Code Cache", "GPUCache", "logs"]}
+          "Orca": ["Cache", "Code Cache", "GPUCache", "logs"],
+          "Herdr": ["core.log", "holder.log"]}
 
 
 def scan(roots=None):
     entries, errors = [], []
     selected_roots = list(roots) if roots is not None else profile_roots(errors=errors)
     if roots is None:
+        herdr_root = storage_root()
+        try:
+            selected_roots.extend(("Herdr", p.resolve()) for p, info in _children(herdr_root, errors, "Herdr")
+                                  if stat.S_ISDIR(info.st_mode))
+        except SCAN_ERRORS as exc:
+            _error(errors, "Herdr", herdr_root, exc)
         orca_root = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "orca"
         try:
             info = _plain_stat(orca_root)
@@ -314,7 +322,8 @@ def scan(roots=None):
                 continue
             seen.add(key)
             if provider != "Orca":
-                entries.extend({"Codex": codex, "Claude": claude, "Gemini": gemini}[provider](home, errors=errors))
+                entries.extend({"Codex": codex, "Claude": claude, "Gemini": gemini,
+                                "Herdr": terminals}[provider](home, errors=errors))
         except SCAN_ERRORS as exc:
             _error(errors, provider, home, exc)
         for name in CACHES.get(provider, []):

@@ -13,10 +13,11 @@ from tkinter import filedialog, messagebox, ttk
 from .model import readable_size, signature
 from .operations import DEFAULT_BACKUP_DIR, delete, list_backups, remove_backups
 from .providers import scan
-from .runtime import codex_cli, orca_projects, running_processes
+from .runtime import PROVIDERS, codex_cli, entry_running, orca_projects, running_processes
 from .workspaces import ai_homes, conversations_in, fixed_problem, key as path_key, plan_workspaces
 
-CLOSE_HINT = {"Orca": "Orca 앱 전체 (안에서 실행 중인 Codex·Claude 터미널 포함)",
+CLOSE_HINT = {"Herdr": "Herdr 앱과 herdr-core 서버 (창 종료 후에도 서버 유지: hc server stop)",
+              "Orca": "Orca 앱 전체 (안에서 실행 중인 Codex·Claude 터미널 포함)",
               "Codex": "Codex 앱과 터미널의 codex CLI",
               "Claude": "Claude 데스크톱 앱과 터미널의 Claude Code (데스크톱 앱도 같은 기록을 사용함)",
               "Gemini": "터미널의 gemini CLI"}
@@ -91,7 +92,7 @@ class App(tk.Tk):
         ttk.Label(bottom, textvariable=self.selection, font=("맑은 고딕", 10, "bold")).pack(side="left")
         self.delete_button = ttk.Button(bottom, text="선택 항목 검토 → 삭제", command=self.review)
         self.delete_button.pack(side="right")
-        ttk.Label(shell, text="Codex는 공식 삭제 명령과 DB 백업을 사용합니다. Claude·Gemini 파일은 Windows 휴지통으로 이동합니다.\n작업 폴더는 백업 없이 휴지통으로 이동합니다. 공간은 휴지통을 비우고 '백업 관리'에서 오래된 백업을 지운 뒤 확보됩니다.", foreground="#666666").pack(anchor="w", pady=(12, 0))
+        ttk.Label(shell, text="백업 없이 삭제합니다. Codex 대화는 공식 명령으로 영구 삭제하며 복구할 수 없습니다.\nClaude·Gemini 대화, 캐시·로그, 선택한 작업 폴더는 Windows 휴지통으로 이동합니다.", foreground="#666666").pack(anchor="w", pady=(12, 0))
         self.after(100, self.poll)
         self.after(150, self.refresh)
 
@@ -133,7 +134,7 @@ class App(tk.Tk):
                 running = {p["app"] for p in processes}
             except Exception as exc:
                 errors.append(str(exc))
-                processes, running = [], {"Codex", "Claude", "Gemini", "Orca"}
+                processes, running = [], set(PROVIDERS)
             projects = []
             if self.roots is None:
                 try:
@@ -195,7 +196,7 @@ class App(tk.Tk):
                 else:
                     archive, good, failed, notes = result
                     self.status.set(f"정리 완료 · 성공 {len(good)}개 / 오류 {len(failed)}개 · 결과창을 닫으면 목록을 새로고칩니다.")
-                    text = f"처리 성공 {len(good)}개 / 오류 {len(failed)}개\n백업: {archive}\n"
+                    text = f"처리 성공 {len(good)}개 / 오류 {len(failed)}개\n" + (f"백업: {archive}\n" if archive else "백업 없이 처리했습니다.\n")
                     text += "".join(f"\n· {n}" for n in notes)
                     text += "".join(f"\n✕ {name}: {reason}" for name, reason in failed[:12])
                     messagebox.showinfo("정리 결과", text, parent=self)
@@ -247,7 +248,7 @@ class App(tk.Tk):
         return k if k in self.dirs else None
 
     def is_running(self, e):
-        return e.provider in self.running or ("orca" in str(e.home).lower() and "Orca" in self.running)
+        return entry_running(e, self.running)
 
     def can_select(self, e):
         return not e.blocked and not self.is_running(e)
@@ -289,7 +290,7 @@ class App(tk.Tk):
                 date = display_date(e.updated)
                 title = " ".join(e.title.split())[:160]
                 self.tree.insert(parent, "end", iid=e.key, text=f"{'☑' if e.key in self.checked else '☐'}  {title}",
-                                 values=(e.provider, "캐시" if e.kind == "cache" else "대화",
+                                 values=(e.provider, "캐시" if e.kind == "cache" else ("터미널" if e.provider == "Herdr" else "대화"),
                                          readable_size(e.extra.get("display_size", 0)) if e.files else "DB 항목만", date, locked),
                                  tags=("blocked",) if locked != "선택 가능" else ())
                 self.rows[e.key] = ("entry", e)
@@ -398,7 +399,7 @@ class App(tk.Tk):
 
     def show_processes(self):
         if not self.processes:
-            text = "실행 중인 Codex·Claude·Gemini·Orca 프로세스가 없습니다." if not self.running else "실행 상태를 확인하지 못해 모든 앱을 실행 중으로 간주합니다."
+            text = "실행 중인 Codex·Claude·Gemini·Orca·Herdr 프로세스가 없습니다." if not self.running else "실행 상태를 확인하지 못해 모든 앱을 실행 중으로 간주합니다."
         else:
             by_app = defaultdict(list)
             for p in self.processes:
@@ -511,26 +512,11 @@ class App(tk.Tk):
             text.insert("end", "\n■ 정리할 AI 기록\n", "head")
         for e in selected:
             text.insert("end", f"[{e.provider}] {e.title[:120]}\n  ID: {e.session}\n  저장소: {e.home}\n")
-        text.insert("end", "\nCodex: 공식 명령으로 영구 삭제 + 대화 원문·DB 스냅샷 백업. 프로젝트 등록은 보존합니다.")
+        text.insert("end", "\n백업을 만들지 않습니다. Codex 대화는 공식 명령으로 영구 삭제하며 복구할 수 없습니다. 프로젝트 등록은 보존합니다.")
         if any(e.provider == "Codex" for e in selected):
             text.insert("end", f"\n  사용할 Codex CLI: {self.codex}")
-        text.insert("end", "\nClaude·Gemini: 백업 후 Windows 휴지통으로 이동. Claude 프로젝트 메모리(memory)는 보존합니다.\n앱 실행 중에는 삭제를 차단합니다.")
+        text.insert("end", "\nClaude·Gemini 대화와 캐시·로그: Windows 휴지통으로 이동. Claude 프로젝트 메모리(memory)는 보존합니다.\n앱 실행 중에는 삭제를 차단합니다.")
         text.configure(state="disabled")
-        destination = tk.StringVar(value=str(self.backup_dir))
-        bar = ttk.Frame(window, padding=(15, 15, 15, 4))
-        bar.pack(fill="x")
-        ttk.Label(bar, text="삭제 전 백업 위치:").pack(side="left")
-        ttk.Entry(bar, textvariable=destination).pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Button(bar, text="변경", command=lambda: destination.set(filedialog.askdirectory(parent=window) or destination.get())).pack(side="left")
-        backup_info = tk.StringVar(value="백업 목록을 읽는 중…")
-        ttk.Label(window, padding=(15, 0), foreground="#666666", textvariable=backup_info).pack(anchor="w")
-        self.load_review_backup_info(window, backup_info, Path(destination.get()))
-        caches = [e for e in selected if e.kind == "cache"]
-        with_caches = tk.BooleanVar(value=False)
-        if caches:
-            size = readable_size(sum(e.extra.get("display_size", 0) for e in caches))
-            ttk.Checkbutton(window, variable=with_caches,
-                            text=f"캐시·로그도 백업 ({size}). 앱이 다시 만드는 파일이라 보통은 필요 없습니다.").pack(anchor="w", padx=15, pady=(8, 0))
         agreed = tk.BooleanVar()
         ttk.Checkbutton(window, text="선택 작업이 종료되었고, 필요한 결과물은 보관했거나 필요 없음을 확인했습니다.", variable=agreed).pack(anchor="w", padx=15, pady=(8, 0))
         moved = tk.BooleanVar()
@@ -544,24 +530,21 @@ class App(tk.Tk):
             if (self.errors and (self.project_groups or eligible)) or any(not self.can_select(e) for e in selected):
                 messagebox.showerror("삭제 차단", "조회 오류 또는 실행 중인 앱을 확인하고 새로고침하세요.", parent=window)
                 return
-            if not agreed.get() or not destination.get().strip():
-                messagebox.showinfo("확인 필요", "작업 종료·결과물 보관 여부와 백업 위치를 확인하세요.", parent=window)
+            if not agreed.get():
+                messagebox.showinfo("확인 필요", "작업 종료·결과물 보관 여부를 확인하세요.", parent=window)
                 return
             if eligible and not moved.get():
                 messagebox.showinfo("확인 필요", "작업 폴더의 결과물을 옮겼는지 확인하세요.", parent=window)
                 return
             groups = set(self.project_groups)
-            dest = Path(destination.get()).expanduser()
-            self.backup_dir = dest
-            include = with_caches.get()
             window.destroy()
-            self.status.set("백업 검증 후 선택한 기록을 정리하는 중…")
+            self.status.set("선택한 기록을 정리하는 중…")
             folders = [i["path"] for i in eligible]
             everything = list(self.entries)
             def work():
                 expected = {e.key: signature(e) for e in selected}
-                return delete(selected, expected, dest, groups, include_caches=include,
+                return delete(selected, expected, project_groups=groups,
                               workspaces=folders, all_entries=everything)
             self.launch(work, "delete")
-        ttk.Button(window, text="백업 후 선택 기록 삭제", command=apply).pack(anchor="e", padx=15, pady=15)
+        ttk.Button(window, text="선택 기록 삭제", command=apply).pack(anchor="e", padx=15, pady=15)
         window.grab_set()
