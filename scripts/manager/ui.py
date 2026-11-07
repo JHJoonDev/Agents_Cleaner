@@ -34,8 +34,9 @@ class App(tk.Tk):
     def __init__(self, roots=None, allow_delete=True):
         super().__init__()
         self.title("AI 기록 정리 · 프로젝트 / 대화 선택")
-        if os.name == "nt":
-            self.iconbitmap(default=str(Path(__file__).resolve().parents[2] / "app.ico"))
+        ico = Path(__file__).resolve().parents[2] / "assets" / "app.ico"
+        if os.name == "nt" and ico.is_file():
+            self.iconbitmap(default=str(ico))
         self.geometry("1250x800")
         self.minsize(980, 620)
         self.roots, self.allow_delete = roots, allow_delete
@@ -63,6 +64,7 @@ class App(tk.Tk):
         search.pack(side="left", fill="x", expand=True)
         self.query.trace_add("write", lambda *_: self.render())
         ttk.Button(bar, text="새로고침", command=self.refresh).pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="전체 선택", command=self.select_all).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="선택 해제", command=self.clear).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="실행 중 앱", command=self.show_processes).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="백업 관리", command=self.manage_backups).pack(side="left", padx=(8, 0))
@@ -303,6 +305,12 @@ class App(tk.Tk):
         if self.workspaces:
             text += f" · 작업 폴더 {len(self.workspaces)}개 함께 삭제 (용량은 검토 단계에서 계산)"
         self.selection.set(text)
+
+    def select_all(self):
+        if self.busy:
+            return
+        self.checked.update(e.key for e in self.entries if self.can_select(e))
+        self.render_keep_open()
 
     def clear(self):
         self.checked.clear()

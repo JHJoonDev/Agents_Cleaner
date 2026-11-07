@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#383b41"/>
+      <stop offset="1" stop-color="#1f2023"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f86b0"/>
+      <stop offset="1" stop-color="#315d7d"/>
+    </linearGradient>
+    <linearGradient id="bristles" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ecd29a"/>
+      <stop offset="1" stop-color="#c9a461"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#tile)" stroke="#4d5158" stroke-width="4"/>
+  <path d="M60 40h118a24 24 0 0 1 24 24v74a24 24 0 0 1-24 24H104l-38 32v-32h-6a24 24 0 0 1-24-24V64a24 24 0 0 1 24-24z" fill="url(#bubble)"/>
+  <g fill="none" stroke="#e8eef4" stroke-width="13" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M58 76l9 9 15-17M102 77h72"/>
+    <path d="M58 112l9 9 15-17M102 113h52"/>
+  </g>
+  <path d="M102 146h30" fill="none" stroke="#9fbdd6" stroke-width="13" stroke-linecap="round"/>
+  <g transform="translate(180 182) rotate(35)">
+    <g fill="#232427" stroke="#232427" stroke-width="14" stroke-linejoin="round">
+      <rect x="-8" y="-92" width="16" height="64" rx="8"/>
+      <path d="M-24 -30h48l14 58q-38 10-76 0z"/>
+    </g>
+    <rect x="-7" y="-92" width="14" height="64" rx="7" fill="#a9824a"/>
+    <path d="M-24 -18h48l14 46q-38 10-76 0z" fill="url(#bristles)"/>
+    <rect x="-26" y="-34" width="52" height="18" rx="5" fill="#d6b779"/>
+    <path d="M-12 -12l-4 36M0 -12v38M12 -12l4 36" fill="none" stroke="#a9824a" stroke-width="5" stroke-linecap="round"/>
+  </g>
+  <path d="M96 206l5 12 12 5-12 5-5 12-5-12-12-5 12-5z" fill="#ecd29a"/>
+</svg>

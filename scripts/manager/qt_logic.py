@@ -212,6 +212,10 @@ class Logic:
             self.detail_hint.setText(f"작업 폴더를 함께 삭제합니다: {path}\n하위 폴더 포함 대화 {len(members)}개를 앱 구분 없이 선택했습니다." + (f" 선택 불가 {locked}개가 있어 검토 단계에서 폴더가 제외됩니다." if locked else ""))
         self.sync_checks()
 
+    def select_all(self):
+        # Select records only; deleting source folders remains an explicit choice.
+        self.set_records_checked(self.entries, True)
+
     def clear(self):
         if not self.busy:
             self.checked.clear()

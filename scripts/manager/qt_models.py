@@ -1,6 +1,6 @@
 """Qt presentation models and the shared background task wrapper."""
 from datetime import datetime
-from PySide6.QtCore import QObject, QRunnable, QSortFilterProxyModel, Qt, QRect, Signal
+from PySide6.QtCore import QObject, QRunnable, QSortFilterProxyModel, Qt, QRect, Signal, QEvent
 from PySide6.QtGui import QBrush, QColor, QFont, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
@@ -82,6 +82,22 @@ class RecordProxy(QSortFilterProxyModel):
         if isinstance(a, (int, float)) and isinstance(b, (int, float)):
             return a < b
         return str(a or "").casefold() < str(b or "").casefold()
+
+
+class FolderCheckDelegate(QStyledItemDelegate):
+    """Make the folder checkbox and its label one click target."""
+    def editorEvent(self, event, model, option, index):
+        if index.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+            if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+                return event.button() == Qt.MouseButton.LeftButton
+            if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                if not index.flags() & Qt.ItemFlag.ItemIsEnabled:
+                    return False
+                state = index.data(Qt.ItemDataRole.CheckStateRole)
+                checked = state in (Qt.CheckState.Checked, Qt.CheckState.Checked.value)
+                return model.setData(index, Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked,
+                                     Qt.ItemDataRole.CheckStateRole)
+        return super().editorEvent(event, model, option, index)
 
 
 class SizeDelegate(QStyledItemDelegate):

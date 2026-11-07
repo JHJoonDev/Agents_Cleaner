@@ -95,6 +95,26 @@ class QtSmokeTests(unittest.TestCase):
         self.assertFalse(self.window.tree.grab().isNull())
         self.assertTrue((self.project / "source.py").exists())
 
+    def test_mouse_click_on_project_folder_cell(self):
+        from PySide6.QtTest import QTest
+        cell = self.window.model.group_items[self.group][6]
+        index = self.window.proxy.mapFromSource(cell.index())
+        self.window.tree.scrollTo(index)
+        self.app.processEvents()
+        QTest.mouseClick(self.window.tree.viewport(), Qt.MouseButton.LeftButton,
+                         pos=self.window.tree.visualRect(index).center())
+        self.assertIn(path_key(self.project), self.window.workspaces)
+        QTest.mouseClick(self.window.tree.viewport(), Qt.MouseButton.LeftButton,
+                         pos=self.window.tree.visualRect(index).center())
+        self.assertNotIn(path_key(self.project), self.window.workspaces)
+
+    def test_select_all_and_no_conversation_tooltip(self):
+        self.window.actions["select_all"].trigger()
+        self.assertEqual(self.window.checked, {e.key for e in self.window.entries if self.window.can_select(e)})
+        self.assertFalse(self.window.workspaces)
+        for e in self.chats:
+            self.assertEqual(self.window.model.record_items[e.key][0].toolTip(), "")
+
     def test_work_folder_selects_all_apps_and_descendants_then_unchecks(self):
         folder = self.window.model.group_items[self.group][6]
         folder.setCheckState(Qt.CheckState.Checked)

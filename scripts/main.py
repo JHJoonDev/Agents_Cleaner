@@ -32,6 +32,10 @@ def run_gui(allow_delete=True):
         App(allow_delete=allow_delete).mainloop()
         return
     from manager.qt_ui import App
+    if sys.platform == "win32":
+        # Own taskbar group, so Windows shows the app icon instead of python's.
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AgentsCleaner")
     application = QApplication.instance() or QApplication(sys.argv[:1])
     window = App(allow_delete=allow_delete)
     window.show()

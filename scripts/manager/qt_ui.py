@@ -9,8 +9,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFrame, QGridLay
 
 from .model import readable_size
 from .qt_logic import Logic
-from .qt_models import BYTES, NODE, SEARCH, SORT, RecordModel, RecordProxy, SizeDelegate, display_date, exception, item, mark_row, size_item
-from .qt_style import configure, icon, label, message
+from .qt_models import BYTES, NODE, SEARCH, SORT, RecordModel, RecordProxy, SizeDelegate, FolderCheckDelegate, display_date, exception, item, mark_row, size_item
+from .qt_style import app_icon, configure, icon, label, message
 
 
 class App(QMainWindow, Logic):
@@ -19,6 +19,7 @@ class App(QMainWindow, Logic):
         configure(QApplication.instance())
         self.initialize_logic(roots, allow_delete)
         self.setWindowTitle("AI 기록 정리")
+        self.setWindowIcon(app_icon())
         self.setMinimumSize(1000, 650)
         self.fit_to_screen(1280, 800)
         self._updating = False
@@ -49,7 +50,7 @@ class App(QMainWindow, Logic):
                   area.y() + max(0, (area.height() - height - frame) // 2))
 
     def action(self, key, title, callback, name=None, shortcut=None):
-        action = QAction(icon(name) if name else self.windowIcon(), title, self)
+        action = QAction(icon(name or "app"), title, self)
         action.triggered.connect(callback)
         if shortcut:
             action.setShortcut(shortcut)
@@ -57,6 +58,7 @@ class App(QMainWindow, Logic):
         return action
 
     def build_actions(self):
+        self.action("select_all", "전체 선택", self.select_all, "file", "Ctrl+A")
         self.action("refresh", "새로고침", self.refresh, "refresh", "F5")
         self.action("clear", "선택 해제", self.clear, "clear", "Ctrl+Shift+A")
         self.action("processes", "실행 중 앱", self.show_processes, "process")
@@ -70,7 +72,7 @@ class App(QMainWindow, Logic):
         self.action("size", "기록 용량순 정렬", lambda: self.tree.sortByColumn(3, Qt.SortOrder.DescendingOrder))
         self.action("date", "최근 변경순 정렬", lambda: self.tree.sortByColumn(4, Qt.SortOrder.DescendingOrder))
         self.action("about", "프로그램 정보", lambda: message(self, "AI 기록 정리", "AI 앱의 프로젝트·대화·캐시를 선택 정리합니다.\n작업 폴더는 따로 체크했을 때만 휴지통으로 이동합니다.\n계정·설정·프로젝트 메모리는 보존합니다."), "info")
-        for name, keys in [("파일(&F)", ["refresh", "review", "quit"]), ("편집(&E)", ["clear", "find"]),
+        for name, keys in [("파일(&F)", ["refresh", "review", "quit"]), ("편집(&E)", ["select_all", "clear", "find"]),
                            ("보기(&V)", ["expand", "collapse", "size", "date"]),
                            ("도구(&T)", ["processes", "backups", "errors"]), ("도움말(&H)", ["about"])]:
             menu = self.menuBar().addMenu(name)
@@ -82,7 +84,7 @@ class App(QMainWindow, Logic):
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(16, 16))
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        for key in ["refresh", "clear", "processes", "backups", "errors"]:
+        for key in ["refresh", "select_all", "clear", "processes", "backups", "errors"]:
             toolbar.addAction(self.actions[key])
             if key == "clear":
                 toolbar.addSeparator()
@@ -131,6 +133,8 @@ class App(QMainWindow, Logic):
             self.tree.setColumnWidth(col, width)
         self.size_delegate = SizeDelegate(self.tree)
         self.tree.setItemDelegateForColumn(3, self.size_delegate)
+        self.folder_delegate = FolderCheckDelegate(self.tree)
+        self.tree.setItemDelegateForColumn(6, self.folder_delegate)
         self.tree.clicked.connect(self.clicked)
         self.tree.selectionModel().currentChanged.connect(lambda current, _: self.show_details(current))
         self.model.itemChanged.connect(self.item_changed)
@@ -245,7 +249,7 @@ class App(QMainWindow, Logic):
                         self._available_keys[group].add(key)
                     reason = e.blocked or ("앱 종료 후 삭제" if self.is_running(e) else "")
                     exception(child[5], reason)
-                    child[0].setToolTip(reason or e.title)
+                    child[0].setToolTip(reason)
                     row[0].appendRow(child)
                     self.model.record_items[key] = child
                 self.model.appendRow(row)

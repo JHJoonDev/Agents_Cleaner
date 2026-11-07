@@ -131,6 +131,21 @@ def icon(name, color="#adb6c2"):
     return QIcon(pixmap)
 
 
+@lru_cache(maxsize=1)
+def app_icon():
+    renderer = QSvgRenderer(str(Path(__file__).resolve().parents[2] / "assets" / "app.svg"))
+    result = QIcon()
+    for size in (16, 20, 24, 32, 48, 64, 128, 256):
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        renderer.render(painter)
+        painter.end()
+        result.addPixmap(pixmap)
+    return result
+
+
 def label(text="", muted=False, wrap=False):
     widget = QLabel(text)
     widget.setTextFormat(Qt.TextFormat.PlainText)
