@@ -5,14 +5,18 @@ from time import monotonic
 
 from PySide6.QtCore import QThreadPool, QTimer, Slot, Qt
 
-from . import operations
+from . import app_control, operations
 from .model import signature
 from .providers import scan
-from .runtime import PROVIDERS, codex_cli, entry_running, orca_projects, running_processes
+from .runtime import (PROVIDERS, codex_cli, entry_running, lock_key, lock_state, orca_projects, psutil,
+                      running_processes, workspace_blocker)
 from .workspaces import ai_homes, conversations_in, fixed_problem, key as path_key, plan_workspaces
 from .qt_dialogs import BackupDialog, ProcessesDialog, ResultDialog, ReviewDialog
 from .qt_models import Task
-from .qt_style import message
+from .qt_style import ask, message
+
+# Detection takes milliseconds with psutil. Its PowerShell fallback starts a process each time.
+MONITOR_MS = 2000 if psutil is not None else 15000
 
 
 class Logic:
@@ -29,6 +33,10 @@ class Logic:
         self.elapsed_timer = QTimer(self)
         self.elapsed_timer.setInterval(1000)
         self.elapsed_timer.timeout.connect(self.update_busy_status)
+        self.process_dialog, self.monitor_task, self.monitor_failed = None, None, False
+        self.monitor_timer = QTimer(self)
+        self.monitor_timer.setInterval(MONITOR_MS)
+        self.monitor_timer.timeout.connect(self.poll_processes)
 
     def update_busy_status(self):
         if self.busy and self.job_started is not None:
@@ -62,7 +70,7 @@ class Logic:
                 e.extra["display_size"] = e.size
             try:
                 processes = running_processes()
-                running = {p["app"] for p in processes}
+                running = lock_state(processes)
             except Exception as exc:
                 errors.append(str(exc))
                 processes, running = [], set(PROVIDERS)
@@ -110,6 +118,8 @@ class Logic:
             self.update_actions()
         if event == "delete" and not error:
             self.refresh()
+        elif event in {"stop", "force"}:
+            self.after_stop(event, result, error)
 
     def apply_result(self, event, result, error):
         if error:
@@ -129,8 +139,9 @@ class Logic:
                 grouped[e.group].append(e)
             self.groups = dict(grouped)
             self.render()
-            live = ", ".join(sorted(self.running)) or "없음"
-            self.status_text.setText(f"기록 {len(self.entries):,}개 · 조회 오류 {len(self.errors)}개 · 실행 중: {live}")
+            self.monitor_failed = False
+            self.update_status()
+            self.update_process_dialog()
         elif event == "plan":
             self.status_text.setText("작업 폴더 확인 완료")
             self.open_review(self.pending, result)
@@ -142,6 +153,68 @@ class Logic:
                 dialog.exec()
             finally:
                 dialog.deleteLater()
+
+    def update_status(self):
+        live = ", ".join(sorted(self.running)) or "없음"
+        text = f"기록 {len(self.entries):,}개 · 조회 오류 {len(self.errors)}개 · 실행 중: {live}"
+        locked = sum(self.is_running(e) for e in self.entries)
+        if locked:
+            text += f" · 잠긴 기록 {locked:,}개"
+        if self.monitor_failed:
+            text += " · 실행 상태 확인 실패로 모두 잠금"
+        self.status_text.setText(text)
+
+    def poll_processes(self):
+        if self.busy or self._closing or self.monitor_task is not None:
+            return
+        def work():
+            processes = running_processes()
+            return lock_state(processes), processes
+        task = Task(work, "monitor")
+        task.signals.done.connect(self.monitor_done, Qt.ConnectionType.QueuedConnection)
+        self.monitor_task = task
+        try:
+            self.pool.start(task)
+        except Exception as exc:
+            self.monitor_done("monitor", None, str(exc) or type(exc).__name__)
+
+    @Slot(str, object, object)
+    def monitor_done(self, _event, result, error):
+        self.monitor_task = None
+        # A scan or delete in progress has fresher facts, or will check for itself.
+        if self.busy or self._closing:
+            return
+        running, processes = (set(PROVIDERS), []) if error else result
+        self.apply_processes(running, processes, bool(error))
+
+    def apply_processes(self, running, processes, failed=False):
+        """Follow the apps without rescanning, so the list and the current selection survive."""
+        locks_changed = lock_key(running) != lock_key(self.running) or failed != self.monitor_failed
+        apps_changed = {p["pid"] for p in processes} != {p["pid"] for p in self.processes}
+        self.running, self.processes, self.monitor_failed = running, processes, failed
+        if locks_changed:
+            dropped = self.prune_selection()
+            self.update_locks()
+            self.update_status()
+            if dropped:
+                self.detail_hint.setText(f"앱 실행 상태가 바뀌어 선택 {dropped}개를 해제했습니다.")
+        if apps_changed or locks_changed:
+            self.update_process_dialog()
+
+    def prune_selection(self):
+        before = len(self.checked)
+        self.checked = {k for k in self.checked if k in self.entry_by_key and self.can_select(self.entry_by_key[k])}
+        self.project_groups = {g for g in self.project_groups if any(e.key in self.checked for e in self.groups.get(g, []))}
+        if workspace_blocker(self.running):
+            self.workspaces.clear()
+        else:
+            self.workspaces = {k for k in self.workspaces
+                               if all(e.key in self.checked for e in conversations_in(self.dirs[k], self.entries))}
+        return before - len(self.checked)
+
+    def update_process_dialog(self):
+        if self.process_dialog is not None:
+            self.process_dialog.set_groups(app_control.snapshot(self.processes), self.running)
 
     def is_running(self, e):
         return entry_running(e, self.running)
@@ -196,6 +269,10 @@ class Logic:
             self.sync_checks()
             return
         state = k not in self.workspaces if desired is None else desired
+        if state and workspace_blocker(self.running):
+            self.detail_hint.setText(f"{workspace_blocker(self.running)}. '실행 중 앱'에서 종료한 뒤 다시 선택하세요.")
+            self.sync_checks()
+            return
         if not state:
             self.workspaces.discard(k)
             self.detail_hint.setText(f"작업 폴더 보존: {path}")
@@ -231,8 +308,38 @@ class Logic:
         return dialog
 
     def show_processes(self):
-        if not self.busy:
-            return self.show_dialog(ProcessesDialog(self.processes, self.running, self))
+        if self.busy:
+            return None
+        stop = self.stop_apps if self.allow_delete else None
+        dialog = ProcessesDialog(app_control.snapshot(self.processes), self.running, stop, self)
+        self.process_dialog = dialog
+        dialog.finished.connect(lambda _: setattr(self, "process_dialog", None))
+        return self.show_dialog(dialog)
+
+    def stop_apps(self, groups):
+        groups = [g for g in groups if g.stoppable]
+        if self.busy or not self.allow_delete or not groups:
+            return
+        if not ask(self.process_dialog or self, "앱 종료", app_control.stop_summary(groups), "종료"):
+            return
+        self.status_text.setText("앱에 종료를 요청하는 중…")
+        self.launch(lambda: app_control.request_close(groups), "stop")
+
+    def after_stop(self, event, result, error):
+        """Runs once the task is finished, so the next step can start its own."""
+        left, notes = result if not error else ([], [])
+        if event == "stop" and left:
+            if ask(self.process_dialog or self, "강제 종료", app_control.leftovers_summary(left, notes), "강제 종료"):
+                self.status_text.setText("남은 프로세스를 강제 종료하는 중…")
+                self.launch(lambda: app_control.force_stop(left), "force")
+                return
+        elif event == "force" and (left or notes):
+            lines = [*notes, *(f"{t.name} (PID {t.pid}) 종료 실패" for t in left)]
+            message(self.process_dialog or self, "일부 프로세스 종료 실패", "\n".join(lines))
+        elif notes:
+            message(self.process_dialog or self, "앱 종료", "\n".join(notes))
+        # Closing apps can write out last-minute changes, so read the records again.
+        self.refresh()
 
     def manage_backups(self):
         if not self.busy:

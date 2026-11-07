@@ -162,3 +162,16 @@ def message(parent, title, text, critical=False):
     box.setText(str(text))
     box.setIcon(QMessageBox.Icon.Critical if critical else QMessageBox.Icon.Information)
     box.exec()
+
+
+def ask(parent, title, text, confirm):
+    """Yes/no with cancel as the default, so a stray Enter never confirms."""
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setText(str(text))
+    box.setIcon(QMessageBox.Icon.Warning)
+    yes = box.addButton(confirm, QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(box.addButton("취소", QMessageBox.ButtonRole.RejectRole))
+    box.exec()
+    return box.clickedButton() == yes

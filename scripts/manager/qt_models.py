@@ -1,7 +1,7 @@
 """Qt presentation models and the shared background task wrapper."""
 from datetime import datetime
 from PySide6.QtCore import QObject, QRunnable, QSortFilterProxyModel, Qt, QRect, Signal, QEvent
-from PySide6.QtGui import QBrush, QColor, QFont, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from .model import readable_size
@@ -137,8 +137,8 @@ def exception(cell, text):
     cell.setText(text)
     cell.setData(text.casefold(), SORT)
     cell.setForeground(QBrush(QColor("#9da2aa")))
-    if text:
-        cell.setIcon(icon("lock"))
+    # Locks now lift while the row stays on screen, so the icon must be able to go too.
+    cell.setIcon(icon("lock") if text else QIcon())
 
 
 def size_item(amount, has_files=True):

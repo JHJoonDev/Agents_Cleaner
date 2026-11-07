@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .model import ClosingConnection, Entry, inside, is_link, read_db, safe_path, signature
 from .providers import CACHES, valid_id
-from .runtime import PROVIDERS, active_providers, command, entry_running
+from .runtime import PROVIDERS, active_providers, command, entry_running, workspace_blocker
 from .recycle import recycle
 from .workspaces import ai_homes, conversations_in, fixed_problem, workspace_problem
 
@@ -93,8 +93,8 @@ def _stopped(detector, entries, workspace=False):
     live = detector()
     if not isinstance(live, (set, frozenset)) or not live.issubset(PROVIDERS):
         raise RuntimeError("실행 상태를 확인하지 못해 삭제를 차단함")
-    if workspace and live & {"Orca", "Herdr"}:
-        raise RuntimeError("Orca 또는 Herdr가 실행 중이어서 작업 폴더를 보존함")
+    if workspace and workspace_blocker(live):
+        raise RuntimeError(workspace_blocker(live))
     for entry in entries:
         if entry_running(entry, live):
             raise RuntimeError(f"{entry.provider}, Orca 또는 Herdr가 실행 중임. 앱과 CLI를 닫은 뒤 삭제")

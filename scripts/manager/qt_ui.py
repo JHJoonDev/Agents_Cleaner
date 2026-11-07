@@ -35,6 +35,7 @@ class App(QMainWindow, Logic):
         self.startup_timer.timeout.connect(self.refresh)
         if auto_refresh:
             self.startup_timer.start(0)
+            self.monitor_timer.start()
 
     def fit_to_screen(self, width, height, frame=40):
         # Keep the title bar inside the work area on scaled screens or with a top taskbar.
@@ -198,6 +199,37 @@ class App(QMainWindow, Logic):
             self.review_button.setEnabled(enabled)
             self.tree.setEnabled(not self.busy)
             self.search.setEnabled(not self.busy)
+        if self.process_dialog is not None:
+            self.process_dialog.set_busy(self.busy)
+
+    def apply_entry_lock(self, e, row):
+        """Set one record's checkbox and lock text. Returns whether it can be selected."""
+        selectable = self.can_select(e)
+        checkable = Qt.ItemFlag.ItemIsUserCheckable
+        row[0].setFlags(row[0].flags() | checkable if selectable else row[0].flags() & ~checkable)
+        reason = e.blocked or ("앱 종료 후 삭제" if self.is_running(e) else "")
+        exception(row[5], reason)
+        row[0].setToolTip(reason)
+        return selectable
+
+    def apply_group_lock(self, row, members):
+        checkable = Qt.ItemFlag.ItemIsUserCheckable
+        locked = self.errors or not any(self.can_select(e) for e in members)
+        row[0].setFlags(row[0].flags() & ~checkable if locked else row[0].flags() | checkable)
+
+    def update_locks(self):
+        """Refresh locks in place, keeping rows, sort order, expansion and scroll position."""
+        self._updating = True
+        try:
+            for group, row in self.model.group_items.items():
+                members = self.groups[group]
+                self.apply_group_lock(row, members)
+                self._available_keys[group] = {e.key for e in members
+                                               if self.apply_entry_lock(e, self.model.record_items[e.key])}
+        finally:
+            self._updating = False
+        self.sync_checks()
+        self.show_details(self.tree.currentIndex())
 
     def render(self):
         self._updating = True
@@ -220,8 +252,7 @@ class App(QMainWindow, Logic):
                 row[0].setData(" ".join(f"{e.provider} {e.home} {e.project} {e.title}" for e in members).casefold(), SEARCH)
                 row[0].setIcon(icon("folder"))
                 row[0].setCheckable(True)
-                if self.errors or not any(self.can_select(e) for e in members):
-                    row[0].setFlags(row[0].flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                self.apply_group_lock(row, members)
                 k = self.workspace_of(group, members)
                 row[6].setData(node, NODE)
                 if self.errors and k:
@@ -243,13 +274,8 @@ class App(QMainWindow, Logic):
                     child[0].setData({"kind": "entry", "key": key}, NODE)
                     child[0].setIcon(icon("file"))
                     child[0].setCheckable(True)
-                    if not self.can_select(e):
-                        child[0].setFlags(child[0].flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-                    else:
+                    if self.apply_entry_lock(e, child):
                         self._available_keys[group].add(key)
-                    reason = e.blocked or ("앱 종료 후 삭제" if self.is_running(e) else "")
-                    exception(child[5], reason)
-                    child[0].setToolTip(reason)
                     row[0].appendRow(child)
                     self.model.record_items[key] = child
                 self.model.appendRow(row)
@@ -356,4 +382,5 @@ class App(QMainWindow, Logic):
         else:
             self._closing = True
             self.startup_timer.stop()
+            self.monitor_timer.stop()
             event.accept()

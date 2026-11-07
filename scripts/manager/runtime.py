@@ -26,9 +26,85 @@ def _orca_may_use(home):
     return "orca" in str(home).lower() or parts[-3:-1] == [".codex", "accounts"]
 
 
+class LiveApps(frozenset):
+    """Running apps plus which Claude conversations they hold. Compares like a set of app names."""
+    def __new__(cls, apps=(), claude_all=False, claude_sessions=()):
+        self = super().__new__(cls, apps)
+        self.claude_all, self.claude_sessions = claude_all, frozenset(claude_sessions)
+        return self
+
+    def holds(self, entry):
+        if "Orca" in self and _orca_may_use(entry.home):
+            return True
+        if entry.provider not in self:
+            return False
+        if entry.provider != "Claude" or entry.kind != "conversation":
+            return True
+        return self.claude_all or entry.session in self.claude_sessions
+
+
 def entry_running(entry, live):
+    if isinstance(live, LiveApps):
+        return live.holds(entry)
+    # A plain set has no process detail (detection failed, or a caller that only knows names).
     return (entry.provider in live or ("Orca" in live and _orca_may_use(entry.home))
             or ("Herdr" in live and entry.provider in {"Codex", "Claude", "Gemini"}))
+
+
+def lock_key(live):
+    """What decides the locks, for spotting a change: LiveApps equality only compares app names."""
+    return (frozenset(live), getattr(live, "claude_all", None), getattr(live, "claude_sessions", None))
+
+
+def workspace_blocker(live):
+    # Source folders stay stricter than records: an idle terminal can still be sitting in one.
+    if live & {"Orca", "Herdr"}:
+        return "Orca 또는 Herdr가 실행 중이어서 작업 폴더를 보존함"
+    if isinstance(live, LiveApps) and (live.claude_all or live.claude_sessions):
+        return "Claude Code 세션이 실행 중이어서 작업 폴더를 보존함"
+    return ""
+
+
+def is_claude_desktop(row):
+    """The desktop shell, not the Claude Code sessions it hosts (those are separate binaries)."""
+    path = str(row.get("path") or "").replace("/", "\\").casefold()
+    return ("\\windowsapps\\claude_" in path or "\\anthropicclaude\\" in path) and "claude-code" not in path
+
+
+def claude_session(pid):
+    """This process's session file, or None if it cannot be tied to one conversation."""
+    home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    path = home / "sessions" / f"{pid}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("pid") != pid:
+            return None
+        sid = data.get("sessionId")
+        # A file older than the process belongs to an earlier process that had this PID.
+        if not isinstance(sid, str) or not sid or psutil is None \
+                or path.stat().st_mtime < psutil.Process(pid).create_time() - 5:
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def lock_state(processes):
+    """Fail closed: one Claude CLI we cannot tie to a conversation locks all Claude conversations.
+
+    CLAUDE_CONFIG_DIR is deliberately not used to narrow this: a Claude started from Herdr had it
+    set to an Orca profile while its conversation was in ~/.claude/projects.
+    """
+    sessions, unknown = set(), False
+    for row in processes:
+        if row["app"] != "Claude" or is_claude_desktop(row):
+            continue
+        data = claude_session(row["pid"])
+        if data is None:
+            unknown = True
+        else:
+            sessions.add(data["sessionId"])
+    return LiveApps({row["app"] for row in processes}, unknown, sessions)
 
 
 _discovery_lock = threading.Lock()
@@ -349,7 +425,7 @@ def running_processes():
 
 
 def active_providers():
-    return {row["app"] for row in running_processes()}
+    return lock_state(running_processes())
 
 
 def orca_projects():

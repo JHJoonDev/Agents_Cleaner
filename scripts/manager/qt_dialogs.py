@@ -275,34 +275,88 @@ class BackupDialog(AsyncDialog):
 
 
 class ProcessesDialog(QDialog):
-    def __init__(self, processes, running, parent=None):
+    """Apps, not PIDs: what is running, and a way to close it unless `stop` is None (read-only)."""
+    def __init__(self, groups, running, stop=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("실행 중 앱")
         self.setWindowModality(Qt.WindowModality.WindowModal)
-        self.resize(880, 430)
+        self.resize(1120, 460)
+        self.stop, self.groups, self.running, self.busy = stop, [], running, False
+        self.stop_buttons = {}
         outer = QVBoxLayout(self)
-        if processes:
-            text = "아래 프로그램을 모두 닫은 뒤 '새로고침'을 누르세요.\nOrca 터미널 안에서 실행했다면 Orca를 닫고 탐색기에서 실행.cmd를 다시 실행하세요."
-        else:
-            text = "실행 중인 Codex·Claude·Gemini·Orca·Herdr 프로세스가 없습니다." if not running else "실행 상태를 확인하지 못해 모든 앱을 실행 중으로 간주합니다."
-        outer.addWidget(label(text, wrap=True))
-        self.tree = table(["앱", "프로세스", "PID", "실행 파일"])
+        self.hint = label(wrap=True)
+        outer.addWidget(self.hint)
+        self.tree = table(["앱 / 프로세스", "상태", "PID", "메모리", "실행 파일", ""])
+        self.tree.setRootIsDecorated(True)
+        self.tree.setUniformRowHeights(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        self.tree.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.tree.setColumnWidth(0, 85)
-        self.tree.setColumnWidth(1, 180)
-        self.tree.setColumnWidth(2, 75)
-        for p in sorted(processes, key=lambda r: (r["app"], r["pid"])):
-            row = QTreeWidgetItem([p["app"], p["name"], str(p["pid"]), p.get("path") or ""])
-            row.setTextAlignment(2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            row.setToolTip(3, p.get("path") or "")
-            self.tree.addTopLevelItem(row)
+        self.tree.header().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        for column, width in enumerate([150, 500, 60, 80]):
+            self.tree.setColumnWidth(column, width)
+        self.tree.setColumnWidth(5, 72)
         outer.addWidget(self.tree, 1)
-        outer.addWidget(label("Orca: 앱 전체(내부 Codex·Claude 포함) / Codex: 앱·CLI / Claude: 데스크톱·Claude Code / Gemini: CLI / Herdr: 앱·core 서버 (창 종료 후에도 서버 유지: hc server stop)", muted=True, wrap=True))
+        outer.addWidget(label("Orca: 앱 전체(내부 Codex·Claude 포함) / Codex: 앱·CLI / Claude: 데스크톱·Claude Code / Gemini: CLI / Herdr: 앱·core 서버", muted=True, wrap=True))
         row = QHBoxLayout()
+        self.stop_all = button("모두 종료", self.stop_everything, row) if stop else None
         row.addStretch()
         button("닫기", self.reject, row)
         outer.addLayout(row)
+        self.set_groups(groups, running)
+
+    def set_groups(self, groups, running):
+        opened = {self.tree.topLevelItem(i).text(0) for i in range(self.tree.topLevelItemCount())
+                  if self.tree.topLevelItem(i).isExpanded()}
+        self.groups, self.running = groups, running
+        self.tree.clear()
+        self.stop_buttons = {}
+        for group in groups:
+            top = QTreeWidgetItem([group.name, group.describe(), "", readable_size(group.memory), ""])
+            top.setToolTip(1, group.describe())
+            self.tree.addTopLevelItem(top)
+            for p in sorted(group.rows, key=lambda r: r["pid"]):
+                child = QTreeWidgetItem([p["name"], "", str(p["pid"]), "", p.get("path") or ""])
+                child.setTextAlignment(2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                child.setToolTip(4, p.get("path") or "")
+                top.addChild(child)
+            top.setExpanded(group.name in opened)
+            if self.stop:
+                widget = QPushButton("종료")
+                widget.setToolTip("" if group.stoppable else self.blocked_reason(group))
+                widget.clicked.connect(lambda _=False, g=group: self.stop([g]))
+                self.tree.setItemWidget(top, 5, widget)
+                self.stop_buttons[group.name] = widget
+        self.update_hint()
+        self.set_busy(self.busy)
+
+    @staticmethod
+    def blocked_reason(group):
+        if group.holds_self:
+            return "이 프로그램이 이 앱 안에서 실행 중이라 함께 꺼집니다. 탐색기에서 실행.cmd로 다시 실행하세요."
+        return "프로세스를 확인할 수 없어 종료할 수 없습니다."
+
+    def update_hint(self):
+        if not self.groups:
+            text = "실행 중인 Codex·Claude·Gemini·Orca·Herdr 프로세스가 없습니다." if not self.running else "실행 상태를 확인하지 못해 모든 앱을 실행 중으로 간주합니다."
+        elif not self.stop:
+            text = "읽기 전용 모드에서는 앱을 종료할 수 없습니다. 아래 프로그램을 직접 닫으면 잠금이 자동으로 풀립니다."
+        else:
+            text = "'종료'를 누르면 확인 후 앱을 닫습니다. 앱이 꺼지면 잠금이 자동으로 풀립니다."
+            blocked = [g.name for g in self.groups if g.holds_self]
+            if blocked:
+                text += f"\n{', '.join(blocked)} 안에서 이 프로그램을 실행해 그 앱은 닫을 수 없습니다. 탐색기에서 실행.cmd로 다시 실행하세요."
+        self.hint.setText(text)
+
+    def stop_everything(self):
+        self.stop([g for g in self.groups if g.stoppable])
+
+    def set_busy(self, busy):
+        self.busy = busy
+        for group in self.groups:
+            widget = self.stop_buttons.get(group.name)
+            if widget:
+                widget.setEnabled(group.stoppable and not busy)
+        if self.stop_all:
+            self.stop_all.setEnabled(not busy and any(g.stoppable for g in self.groups))
 
 
 class ResultDialog(QDialog):
