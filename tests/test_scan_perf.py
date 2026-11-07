@@ -284,6 +284,18 @@ class ScanSafetyTests(unittest.TestCase):
         with patch.dict(os.environ, {"CODEX_HOME": str(home), "CLAUDE_CONFIG_DIR": str(user / "missing")}):
             self.assertEqual(providers.profile_roots(user, roaming), [("Codex", home.resolve())])
 
+    def test_profile_discovery_finds_codex_accounts_except_shared_runtime(self):
+        roaming, user = self.base / "roaming", self.base / "user"
+        accounts = user / ".codex" / "accounts"
+        valid = accounts / "valid"
+        valid.mkdir(parents=True)
+        (accounts / "shared-runtime").mkdir()
+        (accounts / "note.txt").write_text("fixture", encoding="utf8")
+        self.link(accounts / "linked", valid)
+        missing = str(user / "missing")
+        with patch.dict(os.environ, {"CODEX_HOME": missing, "CLAUDE_CONFIG_DIR": missing}):
+            self.assertEqual(providers.profile_roots(user, roaming), [("Codex", valid.resolve())])
+
     def test_signature_matches_previous_format_and_detects_same_size_changes(self):
         folder = self.base / "cache"
         folder.mkdir()

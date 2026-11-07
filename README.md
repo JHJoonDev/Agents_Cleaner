@@ -2,7 +2,7 @@
 
 Codex, Claude Code, Gemini CLI, Orca, Herdr가 PC에 쌓아 둔 기록과 캐시를 프로젝트별 목록으로 보여 주고, 체크한 것만 백업 없이 정리하는 Windows용 프로그램입니다.
 
-Herdr는 `%LOCALAPPDATA%\herdr-core\<프로필>`의 터미널 목록을 조회하고 `core.log`·`holder.log`를 정리합니다. 터미널 상태·화면·앱 설정은 보존하며, 종료된 터미널 제거는 Herdr의 `hc rm <ID>`를 사용하세요. Herdr에서 실행한 Codex·Claude 대화는 기존 원본 저장소에서 표시됩니다. Herdr 앱이나 core 서버가 실행 중이면 공용 AI 기록 삭제도 차단합니다. 창을 닫아도 서버는 남을 수 있습니다(`hc server stop`).
+Herdr는 `%LOCALAPPDATA%\herdr-core\<프로필>`의 터미널 목록을 조회하고 `core.log`·`holder.log`를 정리합니다. 터미널 상태·화면·앱 설정은 보존하며, 종료된 터미널 제거는 Herdr의 `hc rm <ID>`를 사용하세요. Herdr에서 실행한 Codex·Claude 대화는 기존 원본 저장소에서 표시되며, Codex 추가 계정은 `~/.codex/accounts/<ID>`에서 찾습니다. Herdr 앱이나 core 서버가 실행 중이면 공용 AI 기록 삭제도 차단합니다. 창을 닫아도 서버는 남을 수 있습니다(`hc server stop`).
 
 ![메인 화면](design/qt-main.png)
 

@@ -253,6 +253,13 @@ def profile_roots(user_home=None, roaming=None, errors=None):
     roots = [("Codex", Path(os.environ.get("CODEX_HOME", user_home / ".codex"))),
              ("Claude", Path(os.environ.get("CLAUDE_CONFIG_DIR", user_home / ".claude"))),
              ("Gemini", user_home / ".gemini")]
+    accounts = user_home / ".codex" / "accounts"
+    try:
+        # shared-runtime is Orca's runtime folder, not an account: Herdr skips it too.
+        roots.extend(("Codex", p) for p, info in _children(accounts, errors, "Codex")
+                     if stat.S_ISDIR(info.st_mode) and p.name.casefold() != "shared-runtime")
+    except SCAN_ERRORS as exc:
+        _error(errors, "Codex", accounts, exc)
     base = roaming / "orca"
     try:
         info = _plain_stat(base)

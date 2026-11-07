@@ -20,8 +20,14 @@ except ImportError:
 PROVIDERS = {"Codex", "Claude", "Gemini", "Orca", "Herdr"}
 
 
+def _orca_may_use(home):
+    # ~/.codex/accounts homes have no "orca" in their path but can be Orca-managed.
+    parts = [part.casefold() for part in Path(home).parts]
+    return "orca" in str(home).lower() or parts[-3:-1] == [".codex", "accounts"]
+
+
 def entry_running(entry, live):
-    return (entry.provider in live or ("orca" in str(entry.home).lower() and "Orca" in live)
+    return (entry.provider in live or ("Orca" in live and _orca_may_use(entry.home))
             or ("Herdr" in live and entry.provider in {"Codex", "Claude", "Gemini"}))
 
 

@@ -75,6 +75,13 @@ class HerdrTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _stopped(lambda: {"Herdr"}, [], workspace=True)
 
+    def test_orca_blocks_codex_account_homes_but_not_the_default_home(self):
+        account = Entry("Codex", self.base / ".codex/accounts/fixture", "fixture", "fixture", "", 0)
+        default = Entry("Codex", self.base / ".codex", "fixture", "fixture", "", 0)
+        self.assertTrue(entry_running(account, {"Orca"}))
+        self.assertFalse(entry_running(default, {"Orca"}))
+        self.assertFalse(entry_running(account, {"Gemini"}))
+
     def test_all_windows_herdr_process_names_are_detected(self):
         for name in ("Herdr.exe", "herdr-app.exe", "herdr-core.exe", "hc.exe"):
             self.assertEqual(_process_app(name), "Herdr")
