@@ -9,7 +9,19 @@ def main():
     parser = argparse.ArgumentParser(description="AI 프로젝트·대화 체크리스트 정리 (원본 작업 폴더 보존)")
     parser.add_argument("--inventory", action="store_true", help="읽기 전용 통계만 출력. 제목·내용은 출력하지 않음")
     parser.add_argument("--read-only", action="store_true", help="GUI에서 삭제 기능 비활성화")
+    parser.add_argument("--size-report", nargs="?", const="reports/project-sizes.md", help="용량 Markdown 보고서만 저장 (삭제 없음)")
+    parser.add_argument("--size-root", action="append", help="용량 조회 루트 (여러 번 지정 가능)")
+    parser.add_argument("--notify", action="store_true", help="용량 보고서 Telegram 요약")
     args = parser.parse_args()
+    if args.size_report:
+        from pathlib import Path
+        from manager.project_sizes import scan_roots, write_report, notify_report
+        projects, errors = scan_roots(args.size_root)
+        target = write_report(projects, errors, args.size_report)
+        print(str(target.resolve()))
+        if args.notify:
+            notify_report(projects, target.resolve())
+        return
     if args.inventory:
         from manager.providers import scan
         entries, errors = scan()

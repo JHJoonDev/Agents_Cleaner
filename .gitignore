@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
+reports/
 # Screenshots taken from a real profile stay local
 design/*-real.png

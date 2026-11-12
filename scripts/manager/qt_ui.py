@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QAction, QBrush, QColor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFrame, QGridLayout, QHBoxLayout,
                                QHeaderView, QLineEdit, QMainWindow, QPushButton, QSizePolicy,
-                               QSplitter, QToolBar, QTreeView, QVBoxLayout, QWidget)
+                               QSplitter, QToolBar, QTreeView, QVBoxLayout, QWidget, QTabWidget)
 
 from .model import readable_size
 from .qt_logic import Logic
@@ -184,7 +184,12 @@ class App(QMainWindow, Logic):
         self.review_button.clicked.connect(self.review)
         summary_layout.addWidget(self.review_button)
         layout.addWidget(summary)
-        self.setCentralWidget(center)
+        from .qt_sizes import SizeTab
+        self.tabs = QTabWidget()
+        self.tabs.addTab(center, "AI 기록")
+        self.size_tab = SizeTab(self.allow_delete, self)
+        self.tabs.addTab(self.size_tab, "프로젝트 용량")
+        self.setCentralWidget(self.tabs)
         self.status_text = label("목록을 읽는 중…")
         self.statusBar().addWidget(self.status_text, 1)
         self.statusBar().addPermanentWidget(label("읽기 전용" if not self.allow_delete else "계정·설정 보존", muted=True))
@@ -376,6 +381,10 @@ class App(QMainWindow, Logic):
             self.detail_hint.setText("Orca 프로젝트 등록은 조회 전용입니다. 앱에서 등록 해제하세요.")
 
     def closeEvent(self, event):
+        if not self.size_tab.close_worker():
+            event.ignore()
+            message(self, "처리 중", "용량 조회가 끝난 뒤 창을 닫으세요.")
+            return
         if self.busy or any(getattr(dialog, "_removing", False) for dialog in self.dialogs):
             event.ignore()
             message(self, "처리 중", "삭제 결과를 확인한 뒤 창을 닫으세요.")
