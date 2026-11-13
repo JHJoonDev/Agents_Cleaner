@@ -6,8 +6,10 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 
-from .model import is_link, readable_size
+from .model import Entry, is_link, readable_size
+from .operations import _exclusive
 
 # Default: the folder that contains this app; override with AGENTS_CLEANER_SIZE_ROOT.
 DEFAULT_ROOT = Path(os.environ.get("AGENTS_CLEANER_SIZE_ROOT") or Path(__file__).resolve().parents[3])
@@ -130,6 +132,16 @@ def scan_project(path, large=LARGE):
         except OSError:
             project.errors.append(str(current))
     project.candidates.sort(key=lambda x: x.size, reverse=True)
+    from .artifacts import _git_problem
+    for candidate in project.candidates:
+        if candidate.blocked:
+            continue
+        try:
+            reason = _git_problem(candidate.path, path)
+            if reason:
+                candidate.blocked = "Git 추적 파일 포함" if reason == "tracked" else reason
+        except (OSError, ValueError, subprocess.SubprocessError):
+            candidate.blocked = "Git 추적 여부를 확인하지 못해 보존"
     return project
 
 
@@ -158,15 +170,30 @@ def scan_roots(roots=None, large=LARGE):
     return projects, errors
 
 
+@_exclusive
 def recycle_candidate(candidate, project):
     """Only called by the GUI after checkbox selection and explicit confirmation."""
     from .recycle import recycle
+    from . import artifacts, runtime, workspaces
     path = candidate.path.absolute()
     base = project.path.absolute()
     if candidate.blocked or path == base or not path.is_relative_to(base):
         raise ValueError("허용된 프로젝트 정리 대상 아님")
     if any(is_link(p) or protected(p) for p in (path, *path.parents) if p == base or p.is_relative_to(base)):
         raise ValueError("보호/링크 경로")
+    reason = workspaces.fixed_problem(base, workspaces.ai_homes())
+    if reason:
+        raise ValueError(reason)
+    # Apply the same live-work protections as artifact cleanup, including unknown state.
+    apps = runtime.active_providers()
+    if not isinstance(apps, (set, frozenset)) or not apps.issubset(runtime.PROVIDERS):
+        raise RuntimeError("실행 상태를 확인하지 못해 정리를 차단함")
+    entry = Entry("Artifacts", base, "size-candidate", path.name, str(base), 0,
+                  [path], "artifact", {"category": "project-size"})
+    reason = artifacts.live_problem(entry, artifacts.live_cwds()) or artifacts.process_problem(
+        entry, apps, artifacts.process_owners(apps))
+    if reason:
+        raise ValueError(reason)
     fresh = scan_project(base)
     match = next((c for c in fresh.candidates if c.path == path), None)
     if not match or match.blocked or (match.size, match.fingerprint) != (candidate.size, candidate.fingerprint):
