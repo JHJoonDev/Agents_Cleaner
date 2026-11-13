@@ -159,9 +159,20 @@ def validate(entry: Entry):
         if database.parent != entry.home or not database.match("state_*.sqlite"):
             raise ValueError("Codex 데이터베이스 경로 불일치")
         with read_db(database) as db:
-            row = db.execute("select updated_at from threads where id=?", (entry.session,)).fetchone()
+            columns = {r[1] for r in db.execute("pragma table_info(threads)")}
+            selected = "updated_at, rollout_path" if "rollout_path" in columns else "updated_at"
+            row = db.execute(f"select {selected} from threads where id=?", (entry.session,)).fetchone()
         if not row or abs(float(row[0]) - entry.updated) > 1:
             raise ValueError("대화가 변경되었음. 새로고침 후 다시 선택")
+        if "rollout_candidates" in entry.extra:
+            candidates = []
+            if "rollout_path" in columns and row["rollout_path"]:
+                rollout = Path(row["rollout_path"])
+                if not rollout.is_absolute():
+                    rollout = entry.home / rollout
+                candidates = [rollout, rollout.with_name(rollout.name + ".zst")]
+            if candidates != [Path(p) for p in entry.extra["rollout_candidates"]]:
+                raise ValueError("대화 파일 경로가 변경됨. 새로고침 후 다시 선택")
 
 
 def backup(entries, destination: Path, project_groups, include_caches=True, workspaces=()):

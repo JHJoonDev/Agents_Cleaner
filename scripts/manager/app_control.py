@@ -170,7 +170,9 @@ def request_close(groups, grace=GRACE_SECONDS):
     for hwnd, pid in visible_windows():
         if pid in own and _alive(own[pid]) and close_window(hwnd):
             asked = True
-    if any(g.name == "Herdr" for g in groups):
+    # The dialog may outlive the captured server. Do not stop a new server
+    # merely because an old Herdr group is still displayed.
+    if any(g.name == "Herdr" and any(_alive(t) for t in g.targets) for g in groups):
         try:
             runtime.command("hc", ["server", "stop"], timeout=15)
             asked = True
