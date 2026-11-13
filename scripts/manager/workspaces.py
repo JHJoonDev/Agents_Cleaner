@@ -31,7 +31,8 @@ def conversations_in(path, entries):
 
 def ai_homes(entries=()):
     roaming = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    homes = {e.home for e in entries} | {p for _, p in profile_roots()} | {roaming / "orca"}
+    # Artifact homes are projects, TEMP or herdr-app data: bounding roots, not AI app storage.
+    homes = {e.home for e in entries if getattr(e, "kind", "") != "artifact"} | {p for _, p in profile_roots()} | {roaming / "orca"}
     home = Path.home()
     return homes | protected_homes() | {home / ".codex", home / ".claude", home / ".gemini"}
 

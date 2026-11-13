@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFrame, QGridLay
                                QSplitter, QToolBar, QTreeView, QVBoxLayout, QWidget)
 
 from .model import readable_size
+from .runtime import artifact_details, entry_kind
 from .qt_logic import Logic
 from .qt_models import BYTES, NODE, SEARCH, SORT, RecordModel, RecordProxy, SizeDelegate, FolderCheckDelegate, display_date, exception, item, mark_row, size_item
 from .qt_style import app_icon, configure, icon, label, message
@@ -269,7 +270,7 @@ class App(QMainWindow, Logic):
                 for e in members:
                     date = display_date(e.updated)
                     key = e.key
-                    child = [item(" ".join(e.title.split())[:160]), item(e.provider), item("캐시" if e.kind == "cache" else ("터미널" if e.provider == "Herdr" else "대화")),
+                    child = [item(" ".join(e.title.split())[:160]), item(e.provider), item(entry_kind(e)),
                              size_item(e.extra.get("display_size", 0), bool(e.files)), item(date, e.updated, True), item(), item()]
                     child[0].setData({"kind": "entry", "key": key}, NODE)
                     child[0].setIcon(icon("file"))
@@ -360,17 +361,19 @@ class App(QMainWindow, Logic):
         if node.get("kind") == "entry":
             e = self.entry_by_key[node["key"]]
             self.detail_title.setText(e.title)
-            self.detail_app.setText(f"{e.provider} / {'캐시' if e.kind == 'cache' else '대화'}")
+            self.detail_app.setText(f"{e.provider} / {entry_kind(e)}")
             self.detail_folder.setText(e.project)
             self.detail_store.setText(str(e.home))
-            self.detail_hint.setText(e.blocked or ("앱 종료 후 삭제" if self.is_running(e) else f"ID: {e.session}"))
+            self.detail_hint.setText(artifact_details(e) if e.kind == "artifact" else
+                                     e.blocked or ("앱 종료 후 삭제" if self.is_running(e) else f"ID: {e.session}"))
         elif node.get("kind") == "project":
             group = tuple(node["group"])
             self.detail_title.setText(Path(group[2]).name or group[2])
             self.detail_app.setText(f"{group[0]} / 프로젝트")
             self.detail_folder.setText(group[2])
             self.detail_store.setText(group[1])
-            self.detail_hint.setText("프로젝트 행을 체크하면 소속 대화를 함께 선택합니다.")
+            self.detail_hint.setText("같은 단계의 작업 부산물을 함께 선택합니다." if group[0] == "Artifacts" else
+                                     "프로젝트 행을 체크하면 소속 대화를 함께 선택합니다.")
         elif node.get("kind") == "orca":
             self.detail_folder.setText(node["path"])
             self.detail_hint.setText("Orca 프로젝트 등록은 조회 전용입니다. 앱에서 등록 해제하세요.")
