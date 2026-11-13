@@ -9,7 +9,7 @@ from . import app_control, operations
 from .model import signature
 from .providers import scan
 from .runtime import (PROVIDERS, codex_cli, entry_running, lock_key, lock_state, orca_projects, psutil,
-                      running_processes, workspace_blocker)
+                      running_processes, workspace_blocker, entry_group)
 from .workspaces import ai_homes, conversations_in, fixed_problem, key as path_key, plan_workspaces
 from .qt_dialogs import BackupDialog, ProcessesDialog, ResultDialog, ReviewDialog
 from .qt_models import Task
@@ -136,7 +136,7 @@ class Logic:
             self.entry_by_key = {e.key: e for e in self.entries}
             grouped = defaultdict(list)
             for e in self.entries:
-                grouped[e.group].append(e)
+                grouped[entry_group(e)].append(e)
             self.groups = dict(grouped)
             self.render()
             self.monitor_failed = False
@@ -223,7 +223,7 @@ class Logic:
         return not e.blocked and not self.is_running(e)
 
     def workspace_of(self, group, members):
-        if all(e.kind == "cache" for e in members):
+        if all(e.kind in {"cache", "artifact"} for e in members):
             return None
         k = path_key(group[2]) if Path(group[2]).is_absolute() else None
         return k if k in self.dirs else None
@@ -242,7 +242,7 @@ class Logic:
             return
         for e in eligible:
             self.checked.add(e.key) if state else self.checked.discard(e.key)
-        if group is not None:
+        if group is not None and not all(e.kind == "artifact" for e in members):
             self.project_groups.add(group) if state else self.project_groups.discard(group)
         else:
             for e in members:
@@ -282,7 +282,7 @@ class Logic:
                 if self.can_select(e):
                     self.checked.add(e.key)
             for g, ms in self.groups.items():
-                if all(m.key in self.checked for m in ms):
+                if not all(m.kind == "artifact" for m in ms) and all(m.key in self.checked for m in ms):
                     self.project_groups.add(g)
             self.workspaces.add(k)
             locked = sum(not self.can_select(e) for e in members)

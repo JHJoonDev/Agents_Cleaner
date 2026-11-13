@@ -248,11 +248,15 @@ def gemini(home: Path, errors=None):
 
 
 def profile_roots(user_home=None, roaming=None, errors=None):
+    from .runtime import claude_homes
     user_home = Path(user_home or Path.home())
     roaming = Path(roaming or os.environ.get("APPDATA", user_home / "AppData" / "Roaming"))
-    roots = [("Codex", Path(os.environ.get("CODEX_HOME", user_home / ".codex"))),
-             ("Claude", Path(os.environ.get("CLAUDE_CONFIG_DIR", user_home / ".claude"))),
-             ("Gemini", user_home / ".gemini")]
+    roots = [("Codex", Path(os.environ.get("CODEX_HOME", user_home / ".codex")))]
+    try:
+        roots.extend(("Claude", p) for p in claude_homes(user_home))
+    except SCAN_ERRORS as exc:
+        _error(errors, "Claude", user_home, exc)
+    roots.append(("Gemini", user_home / ".gemini"))
     accounts = user_home / ".codex" / "accounts"
     try:
         # shared-runtime is Orca's runtime folder, not an account: Herdr skips it too.
@@ -300,7 +304,7 @@ CACHES = {"Codex": [".tmp", "tmp", "log", "cache"],
           "Herdr": ["core.log", "holder.log"]}
 
 
-def scan(roots=None):
+def scan(roots=None, include_artifacts=None):
     entries, errors = [], []
     selected_roots = list(roots) if roots is not None else profile_roots(errors=errors)
     if roots is None:
@@ -359,4 +363,13 @@ def scan(roots=None):
             continue
         unique[e.key] = e
         e.extra["protected_projects"] = project_paths
-    return list(unique.values()), errors
+    entries = list(unique.values())
+    # Explicit roots keep their existing isolated, provider-only meaning. The normal
+    # app/CLI scan includes artifacts; callers can also opt in with custom roots.
+    if include_artifacts if include_artifacts is not None else roots is None:
+        try:
+            from .artifacts import scan_artifacts
+            entries.extend(scan_artifacts(entries, errors))
+        except SCAN_ERRORS as exc:
+            _error(errors, "Artifacts", "", exc)
+    return entries, errors

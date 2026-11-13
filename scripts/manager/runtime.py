@@ -17,7 +17,68 @@ try:
 except ImportError:
     psutil = None
 
-PROVIDERS = {"Codex", "Claude", "Gemini", "Orca", "Herdr"}
+PROVIDERS = {"Codex", "Claude", "Gemini", "Orca", "Herdr", "Artifacts"}
+
+ARTIFACT_TIERS = {1: "1 바로 정리", 2: "2 확인 후 정리", 3: "3 개수 제한"}
+
+
+def entry_group(entry):
+    if entry.kind == "artifact":
+        return (entry.provider, str(entry.home),
+                "작업 부산물 · " + ARTIFACT_TIERS.get(entry.extra.get("tier"), "단계 미확인"))
+    return entry.group
+
+
+def entry_kind(entry):
+    return {"artifact": "부산물", "cache": "캐시"}.get(
+        entry.kind, "터미널" if entry.provider == "Herdr" else "대화")
+
+
+def artifact_details(entry):
+    from .model import readable_size
+    method = "영구 삭제" if entry.extra.get("method") == "delete" else "휴지통"
+    return (f"경로: {', '.join(str(p) for p in entry.files)}\n"
+            f"용량: {readable_size(entry.extra.get('display_size', 0))} · "
+            f"단계: {ARTIFACT_TIERS.get(entry.extra.get('tier'), '미확인')} · 방법: {method}\n"
+            f"미사용: {entry.extra.get('idle_days', 0)}일 · "
+            f"재설치: {entry.extra.get('reinstall') or '해당 없음'}\n"
+            f"차단 사유: {entry.blocked or '없음'}")
+
+
+def cleanup_summary(selected, plan=()):
+    """The same deletion/recycle breakdown in Qt and the Tk fallback."""
+    from .model import readable_size
+    permanent = [e for e in selected if
+                 (e.kind == "artifact" and e.extra.get("method") == "delete")
+                 or (e.provider == "Codex" and e.kind == "conversation")]
+    recycled = [e for e in selected if e not in permanent]
+    folders = [p for p in plan if not p["problem"]]
+    size = lambda rows: sum(e.extra.get("display_size", 0) for e in rows)
+    return (f"영구 삭제: {len(permanent)}개 · {readable_size(size(permanent))}\n"
+            f"휴지통 이동: {len(recycled) + len(folders)}개 · "
+            f"{readable_size(size(recycled) + sum(p['size'] for p in folders))}")
+
+
+def claude_homes(user_home=None):
+    """Plain Claude homes, including launcher accounts; never follow links/junctions."""
+    from .model import is_link
+    user = Path(user_home or Path.home())
+    candidates = [user / ".claude"]
+    candidates.extend(p for p in user.glob(".claude-*")
+                      if not is_link(p) and p.is_dir()
+                      and not is_link(p / "projects") and (p / "projects").is_dir())
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        candidates.append(Path(os.environ["CLAUDE_CONFIG_DIR"]))
+    found, seen = [], set()
+    for p in candidates:
+        if not p.is_dir() or is_link(p) or any(is_link(a) for a in p.absolute().parents):
+            continue
+        resolved = p.resolve()
+        key = os.path.normcase(str(resolved))
+        if key not in seen:
+            seen.add(key)
+            found.append(resolved)
+    return found
 
 
 def _orca_may_use(home):
@@ -34,6 +95,8 @@ class LiveApps(frozenset):
         return self
 
     def holds(self, entry):
+        if getattr(entry, "kind", "conversation") == "artifact":
+            return False
         if "Orca" in self and _orca_may_use(entry.home):
             return True
         if entry.provider not in self:
@@ -44,6 +107,8 @@ class LiveApps(frozenset):
 
 
 def entry_running(entry, live):
+    if getattr(entry, "kind", "conversation") == "artifact":
+        return False
     if isinstance(live, LiveApps):
         return live.holds(entry)
     # A plain set has no process detail (detection failed, or a caller that only knows names).
@@ -72,19 +137,32 @@ def is_claude_desktop(row):
 
 
 def claude_session(pid):
-    """This process's session file, or None if it cannot be tied to one conversation."""
-    home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
-    path = home / "sessions" / f"{pid}.json"
+    """Find this PID across Claude homes; unknown or conflicting ownership fails closed."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or data.get("pid") != pid:
+        from .model import is_link
+        if psutil is None:
             return None
-        sid = data.get("sessionId")
-        # A file older than the process belongs to an earlier process that had this PID.
-        if not isinstance(sid, str) or not sid or psutil is None \
-                or path.stat().st_mtime < psutil.Process(pid).create_time() - 5:
-            return None
-        return data
+        started = psutil.Process(pid).create_time()
+        found = None
+        for home in claude_homes():
+            path = home / "sessions" / f"{pid}.json"
+            if not path.exists():
+                continue
+            if is_link(home / "sessions") or is_link(path):
+                return None
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get("pid") != pid:
+                return None
+            sid = data.get("sessionId")
+            if not isinstance(sid, str) or not sid:
+                return None
+            # An older file belongs to a previous process that had this PID.
+            if path.stat().st_mtime < started - 5:
+                continue
+            if found is not None and found["sessionId"] != sid:
+                return None
+            found = data
+        return found
     except Exception:
         return None
 
@@ -92,8 +170,8 @@ def claude_session(pid):
 def lock_state(processes):
     """Fail closed: one Claude CLI we cannot tie to a conversation locks all Claude conversations.
 
-    CLAUDE_CONFIG_DIR is deliberately not used to narrow this: a Claude started from Herdr had it
-    set to an Orca profile while its conversation was in ~/.claude/projects.
+    Search every Claude home: CLAUDE_CONFIG_DIR may point at an Orca profile while
+    its conversation is in ~/.claude/projects or a launcher account home.
     """
     sessions, unknown = set(), False
     for row in processes:

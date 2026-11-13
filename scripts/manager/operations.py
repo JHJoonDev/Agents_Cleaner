@@ -18,6 +18,7 @@ from .providers import CACHES, valid_id
 from .runtime import PROVIDERS, active_providers, command, entry_running, workspace_blocker
 from .recycle import recycle
 from .workspaces import ai_homes, conversations_in, fixed_problem, workspace_problem
+from . import artifacts
 
 DEFAULT_BACKUP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "AI Storage Manager" / "backups"
 BACKUP_PATTERN = "ai-records-*.zip"
@@ -111,6 +112,14 @@ def _snapshot_database(source, target, timeout=8):
 
 
 def validate(entry: Entry):
+    if entry.kind == "artifact":
+        artifacts.validate_shape(entry)
+        if entry.blocked:
+            raise ValueError(entry.blocked)
+        # Includes empty folders and refuses links below the target as well.
+        for _ in _checked_nodes(entry.files[0], entry.home):
+            pass
+        return
     if entry.provider not in PROVIDERS or entry.kind not in {"cache", "conversation"} or (
             entry.provider in {"Orca", "Herdr"} and entry.kind != "cache"):
         raise ValueError("지원하지 않는 정리 대상")
@@ -156,6 +165,9 @@ def validate(entry: Entry):
 
 
 def backup(entries, destination: Path, project_groups, include_caches=True, workspaces=()):
+    entries = [e for e in entries if e.kind != "artifact"]
+    if not entries and not workspaces:
+        return None
     destination = Path(destination)
     _no_links(destination)
     for workspace in workspaces:
@@ -302,6 +314,23 @@ def validate_project_folder(entry, folder):
             raise ValueError("원본 프로젝트를 포함해 보존함")
 
 
+def _remove_artifact(path, home, expected_state):
+    """Remove only the verified tree, refusing reparse points at every boundary."""
+    nodes = [(p, _identity(p)) for p in _checked_nodes(path, home)]
+    if _target_state(path, home) != expected_state:
+        raise ValueError("삭제 직전 산출물이 변경됨")
+    for item, identity in reversed(nodes):
+        _no_links(item)
+        # Removing children changes a directory's mtime, so use its stable identity.
+        current = _identity(item)
+        if (current[:2] != identity[:2] if item.is_dir() else current != identity):
+            raise ValueError("삭제 중 산출물이 변경됨")
+        if item.is_dir():
+            item.rmdir()
+        else:
+            item.unlink()
+
+
 @_exclusive
 def delete(entries, expected, destination=None, project_groups=(), detector=active_providers, runner=command,
            recycler=recycle, include_caches=True, workspaces=(), all_entries=None, create_backup=False):
@@ -309,18 +338,28 @@ def delete(entries, expected, destination=None, project_groups=(), detector=acti
         raise ValueError("선택한 항목 없음")
     entries, workspaces, project_groups = list(entries), tuple(workspaces), set(project_groups)
     everything = list(all_entries) if all_entries is not None else list(entries)
-    homes = ai_homes(everything)
+    homes = ai_homes(e for e in everything if e.kind != "artifact")
     selected = {e.key for e in entries}
     for path in workspaces:
         reason = workspace_problem(path, everything, selected, homes)
         if reason:
             raise ValueError(f"작업 폴더 {path}: {reason}")
     _stopped(detector, entries, workspace=bool(workspaces))
-    states, workspace_states, project_states = {}, {}, {}
+    states, workspace_states, project_states, artifact_errors = {}, {}, {}, {}
     removed_paths = {p.resolve() for e in entries for p in e.files}
     for path in workspaces:
         workspace_states[path] = _target_state(Path(path), Path(path).parent)
     for e in entries:
+        if e.kind == "artifact":
+            try:
+                validate(e)
+                if signature(e) != expected.get(e.key):
+                    raise ValueError("선택 이후 파일이 변경됨. 새로고침 필요")
+                for path in e.files:
+                    states[path] = _target_state(path, e.home)
+            except Exception as exc:
+                artifact_errors[e.key] = str(exc)
+            continue
         validate(e)
         if signature(e) != expected.get(e.key):
             raise ValueError("선택 이후 파일이 변경됨. 새로고침 필요")
@@ -330,7 +369,8 @@ def delete(entries, expected, destination=None, project_groups=(), detector=acti
             folder = Path(e.extra["project_dir"])
             validate_project_folder(e, folder)
             project_states[e.group] = _project_state(folder, e.home, entries, removed_paths)
-    archive = backup(entries, Path(destination), project_groups, include_caches, workspaces) if create_backup else None
+    archive = backup(entries, Path(destination), project_groups, include_caches, workspaces) if create_backup and (
+        any(e.kind != "artifact" for e in entries) or workspaces) else None
     archive_state = _identity(archive) if archive is not None else None
     def check_archive():
         if archive is None:
@@ -354,13 +394,33 @@ def delete(entries, expected, destination=None, project_groups=(), detector=acti
             failed.append((e.title[:60], f"미시도·보존: {aborted}"))
             continue
         try:
+            if e.key in artifact_errors:
+                raise ValueError(artifact_errors[e.key])
             # Read-only validation may be slow; check fresh processes at each
             # actual mutation boundary (CLI before_run or each recycle call).
             validate(e)
             if signature(e) != expected[e.key]:
                 raise ValueError("삭제 준비 중 파일이 변경됨")
             check_archive()
-            if e.provider == "Codex" and e.kind == "conversation":
+            if e.kind == "artifact":
+                path = e.files[0]
+                # Check all known project roots, including ones discovered after this scan.
+                for source in everything:
+                    if (source.kind == "conversation" or source.provider == "Herdr") and Path(source.project).is_absolute():
+                        root = Path(source.project)
+                        if root.resolve() == path.resolve() or inside(root, path):
+                            raise ValueError("원본 프로젝트를 포함하는 산출물은 보존")
+                stopped([e])
+                artifacts.revalidate(e, apps=detector())
+                _no_links(path)
+                if signature(e) != expected[e.key] or _target_state(path, e.home) != states[path]:
+                    raise ValueError("삭제 직전 산출물이 변경됨")
+                check_archive()
+                if e.extra["method"] == "delete":
+                    _remove_artifact(path, e.home, states[path])
+                else:
+                    recycler(path)
+            elif e.provider == "Codex" and e.kind == "conversation":
                 env = os.environ.copy()
                 env["CODEX_HOME"] = str(e.home)
                 env.pop("CODEX_SQLITE_HOME", None)

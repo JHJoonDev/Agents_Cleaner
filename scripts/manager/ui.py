@@ -13,7 +13,8 @@ from tkinter import filedialog, messagebox, ttk
 from .model import readable_size, signature
 from .operations import DEFAULT_BACKUP_DIR, delete, list_backups, remove_backups
 from .providers import scan
-from .runtime import PROVIDERS, codex_cli, entry_running, orca_projects, running_processes
+from .runtime import (PROVIDERS, codex_cli, entry_running, orca_projects, running_processes,
+                      entry_group, entry_kind, artifact_details, cleanup_summary)
 from .workspaces import ai_homes, conversations_in, fixed_problem, key as path_key, plan_workspaces
 
 CLOSE_HINT = {"Herdr": "Herdr 앱과 herdr-core 서버 (창 종료 후에도 서버 유지: hc server stop)",
@@ -244,7 +245,7 @@ class App(tk.Tk):
             request[1].set(text)
 
     def workspace_of(self, group, members):
-        if all(e.kind == "cache" for e in members):
+        if all(e.kind in {"cache", "artifact"} for e in members):
             return None
         k = path_key(group[2]) if Path(group[2]).is_absolute() else None
         return k if k in self.dirs else None
@@ -262,7 +263,7 @@ class App(tk.Tk):
         self.groups, self.rows = defaultdict(list), {}
         query = self.query.get().strip().casefold()
         for e in self.entries:
-            self.groups[e.group].append(e)
+            self.groups[entry_group(e)].append(e)
         # Most recently used projects first; shared caches after all conversations.
         order = sorted(self.groups.items(), key=lambda g: (all(e.kind == "cache" for e in g[1]),
                                                             -max(e.updated for e in g[1])))
@@ -292,7 +293,7 @@ class App(tk.Tk):
                 date = display_date(e.updated)
                 title = " ".join(e.title.split())[:160]
                 self.tree.insert(parent, "end", iid=e.key, text=f"{'☑' if e.key in self.checked else '☐'}  {title}",
-                                 values=(e.provider, "캐시" if e.kind == "cache" else ("터미널" if e.provider == "Herdr" else "대화"),
+                                 values=(e.provider, entry_kind(e),
                                          readable_size(e.extra.get("display_size", 0)) if e.files else "DB 항목만", date, locked),
                                  tags=("blocked",) if locked != "선택 가능" else ())
                 self.rows[e.key] = ("entry", e)
@@ -331,7 +332,8 @@ class App(tk.Tk):
             return
         kind, value = self.rows[row]
         if kind == "entry":
-            self.details.set(f"작업 폴더: {value.project}\nAI 저장소: {value.home} | ID: {value.session}")
+            self.details.set(artifact_details(value) if value.kind == "artifact" else
+                             f"작업 폴더: {value.project}\nAI 저장소: {value.home} | ID: {value.session}")
         else:
             self.details.set(f"작업 폴더: {value[2]}\nAI 저장소: {value[1]}")
             if self.tree.identify_column(event.x) == "#6":
@@ -362,9 +364,9 @@ class App(tk.Tk):
         remove = all(e.key in self.checked for e in members)
         for e in members:
             self.checked.discard(e.key) if remove else self.checked.add(e.key)
-        if kind == "project":
+        if kind == "project" and not all(e.kind == "artifact" for e in self.groups[value]):
             self.project_groups.discard(value) if remove else self.project_groups.add(value)
-        else:
+        elif kind == "entry":
             self.project_groups.discard(value.group)
         # A work folder stays marked only while every chat that worked in it is checked.
         for k in list(self.workspaces):
@@ -397,7 +399,7 @@ class App(tk.Tk):
                 if self.can_select(e):
                     self.checked.add(e.key)
             for g, ms in self.groups.items():
-                if all(m.key in self.checked for m in ms):
+                if not all(m.kind == "artifact" for m in ms) and all(m.key in self.checked for m in ms):
                     self.project_groups.add(g)
             self.workspaces.add(k)
             locked = sum(not self.can_select(e) for e in members)
@@ -500,13 +502,17 @@ class App(tk.Tk):
         window.title("삭제 대상 최종 확인")
         window.geometry("880x700" if plan else "850x620")
         window.transient(self)
-        ttk.Label(window, text="선택한 AI 기록을 정리합니다." + (" 표시한 작업 폴더도 휴지통으로 옮깁니다." if plan else " 작업 폴더(결과물)는 보존됩니다."), padding=15).pack(anchor="w")
+        has_artifacts = any(e.kind == "artifact" for e in selected)
+        heading = "선택한 AI 기록·작업 부산물을 정리합니다." if has_artifacts else "선택한 AI 기록을 정리합니다."
+        heading += " 표시한 작업 폴더도 휴지통으로 옮깁니다." if plan else (" 선택한 부산물만 정리합니다." if has_artifacts else " 작업 폴더(결과물)는 보존됩니다.")
+        ttk.Label(window, text=heading, padding=15).pack(anchor="w")
         text = tk.Text(window, wrap="word", height=16, padx=12, pady=8)
         text.pack(fill="both", expand=True, padx=15)
         text.tag_configure("head", font=("맑은 고딕", 10, "bold"))
         text.tag_configure("bad", foreground="#b3261e")
         text.tag_configure("warn", foreground="#8a5a00")
         eligible = [item for item in plan if not item["problem"]]
+        text.insert("end", cleanup_summary(selected, plan) + "\n\n", "head")
         if plan:
             text.insert("end", "■ 함께 삭제할 작업 폴더 (휴지통으로 이동, 프로그램이 따로 백업하지 않음)\n", "head")
             for item in plan:
@@ -520,6 +526,8 @@ class App(tk.Tk):
             text.insert("end", "\n■ 정리할 AI 기록\n", "head")
         for e in selected:
             text.insert("end", f"[{e.provider}] {e.title[:120]}\n  ID: {e.session}\n  저장소: {e.home}\n")
+            if e.kind == "artifact":
+                text.insert("end", artifact_details(e) + "\n")
         text.insert("end", "\n백업을 만들지 않습니다. Codex 대화는 공식 명령으로 영구 삭제하며 복구할 수 없습니다. 프로젝트 등록은 보존합니다.")
         if any(e.provider == "Codex" for e in selected):
             text.insert("end", f"\n  사용할 Codex CLI: {self.codex}")

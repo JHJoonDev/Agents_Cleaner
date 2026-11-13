@@ -3,9 +3,56 @@ from __future__ import annotations
 
 import os
 import re
+import json
+import shutil
+import subprocess
 from pathlib import Path
 
 from .model import Entry, read_json
+
+
+def is_root_like(path):
+    """Drive roots and user-home ancestors must not match entire project trees."""
+    from .providers import clean_path
+    target = Path(clean_path(path)).resolve()
+    home = Path.home().resolve()
+    return target == target.parent or target == home or target in home.parents
+
+
+def live_cwds():
+    """Read live local terminal folders, or None when protection cannot be established."""
+    from .providers import clean_path
+    try:
+        installed = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/herdr-core/hc.exe"
+        executable = str(installed) if installed.is_file() else shutil.which("hc")
+        if not executable:
+            return None
+        result = subprocess.run([executable, "ls", "--json"], capture_output=True, text=True,
+                                encoding="utf-8", timeout=3, check=True,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        data = json.loads(result.stdout)
+        rows = data.get("terminals") if isinstance(data, dict) else data
+        if not isinstance(rows, list):
+            return None
+        found = []
+        for row in rows:
+            if not isinstance(row, dict):
+                return None
+            if row.get("state") not in {"live", "finished"}:
+                return None
+            if row.get("state") != "live":
+                continue
+            foreground = row.get("foreground")
+            cwd = (foreground.get("cwd") if isinstance(foreground, dict) else None) or row.get("cwd")
+            if not isinstance(cwd, str) or not cwd:
+                return None
+            path = Path(clean_path(cwd))
+            if not path.is_absolute():
+                return None
+            found.append(path)
+        return found
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return None
 
 
 def storage_root():

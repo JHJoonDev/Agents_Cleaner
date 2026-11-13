@@ -14,7 +14,8 @@ Python 3.11 이상이 필요합니다.
 py -3.11 -m pip install -r requirements.txt
 py -3.11 scripts/main.py              # 정리
 py -3.11 scripts/main.py --read-only  # 목록만 보기
-py -3.11 scripts/main.py --inventory  # 개수만 출력 (제목·내용 없음)
+py -3.11 scripts/main.py --inventory  # 개수만 출력 (제목·내용 없음), 작업 부산물은 단계별 개수·용량
+py -3.11 scripts/main.py --artifacts  # 작업 부산물 목록 JSON (읽기 전용)
 ```
 
 탐색기에서 `실행.cmd` 또는 `읽기전용.cmd`를 더블클릭해도 됩니다. PySide6가 없으면 기본 Tkinter 화면으로 실행됩니다. Tkinter 화면에는 앱 종료와 자동 갱신이 없고 앱 단위로 잠급니다.
@@ -27,8 +28,24 @@ py -3.11 scripts/main.py --inventory  # 개수만 출력 (제목·내용 없음)
 | Claude Code · Gemini 대화 | 백업 없이 Windows 휴지통으로 이동 |
 | 캐시·로그 | 정해진 폴더만 백업 없이 휴지통으로 이동 |
 | 작업 폴더 | '작업 폴더' 열에서 따로 체크한 경우에만, 그 폴더의 대화를 모두 지운 뒤 휴지통으로 이동 |
+| 작업 부산물 1단계 (바로 정리) | `%TEMP%\claude\<해시>\<세션 UUID>`, `%TEMP%`의 `codex_*`·`codex-*`·`herdr-jhj-*`·`ai-storage-db-*`, 프로젝트의 `__pycache__`·`.pytest_cache`. 7일 넘게 수정이 없으면 영구 삭제 |
+| 작업 부산물 2단계 (확인 후 정리) | 프로젝트의 `node_modules`, `.venv`(`pyvenv.cfg` 있음), Rust `target`, 빌드 설정 옆의 `dist`·`build`. 프로젝트를 30일 넘게 쓰지 않았으면 휴지통으로 이동, 다시 설치하는 명령 표시 |
+| 작업 부산물 3단계 (개수 제한) | herdr-app `data\runtime-backups`·`profile-backups`. 최근 3개를 남기고 휴지통으로 이동 |
 
 로그인 정보, 설정, Claude 프로젝트 메모리, Codex 프로젝트 등록, Orca 프로젝트 등록은 지우지 않습니다.
+
+Claude 기록은 `~/.claude`, 모든 `~/.claude-<id>`, `CLAUDE_CONFIG_DIR`에서 찾습니다.
+
+### 작업 부산물
+
+AI 기록과 Herdr 터미널의 작업 폴더를 프로젝트로 보고, 그 안(깊이 4까지)에서 위 폴더를 찾습니다. 링크·junction은 따라가지 않고, git에 올라간 파일이 든 폴더는 목록에서 뺍니다. 다음 경우에는 목록에 보이되 체크할 수 없습니다.
+
+- Herdr에서 실행 중인 터미널의 작업 폴더가 그 프로젝트 안에 있거나, 실행 중인 Claude·Codex가 그 폴더에서 일하는 중
+- 실행 중인 Claude 세션의 임시 폴더, Codex 실행 중의 Codex 임시 항목
+- 최근 24시간 안에 수정됨, 또는 단계별 기간(7일·30일)이 지나지 않음
+- `hc ls`나 프로세스 확인에 실패함 (모두 보존)
+
+이 검사는 삭제 직전에 다시 합니다. 읽기 전용 목록은 `py -3.11 scripts/main.py --artifacts`(JSON)로도 볼 수 있습니다.
 
 ## 실행 중인 앱 닫기
 

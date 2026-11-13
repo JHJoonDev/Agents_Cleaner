@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QFileDialo
 
 from . import operations
 from .model import readable_size
+from .runtime import cleanup_summary
 from .qt_models import Task, display_date
 from .qt_style import icon, label, message
 
@@ -90,7 +91,9 @@ class ReviewDialog(AsyncDialog):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 17, 20, 15)
         outer.setSpacing(12)
-        text = "선택한 AI 기록을 정리합니다." + (" 표시한 작업 폴더도 휴지통으로 옮깁니다." if plan else " 작업 폴더(결과물)는 보존됩니다.")
+        has_artifacts = any(e.kind == "artifact" for e in selected)
+        text = ("선택한 AI 기록·작업 부산물을 정리합니다." if has_artifacts else "선택한 AI 기록을 정리합니다.")
+        text += " 표시한 작업 폴더도 휴지통으로 옮깁니다." if plan else (" 선택한 부산물만 정리합니다." if has_artifacts else " 작업 폴더(결과물)는 보존됩니다.")
         outer.addWidget(label(text, wrap=True))
         if plan:
             group = QGroupBox("함께 삭제할 작업 폴더 (프로그램이 따로 백업하지 않음)")
@@ -121,7 +124,7 @@ class ReviewDialog(AsyncDialog):
                         folder_layout.addLayout(row)
             outer.addWidget(group)
         outer.addWidget(label(f"정리할 AI 기록 · {len(selected)}개"))
-        self.targets = table(["대화 / 캐시", "앱", "기록 용량"])
+        self.targets = table(["대화 / 캐시 / 부산물", "앱", "기록 용량"])
         self.targets.setStyleSheet("QTreeWidget::item { height: 26px; }")
         self.targets.setMinimumHeight(95)
         self.targets.setColumnWidth(1, 90)
@@ -136,6 +139,10 @@ class ReviewDialog(AsyncDialog):
         methods = "백업을 만들지 않습니다. Codex 대화는 공식 명령으로 영구 삭제하며 복구할 수 없습니다.\nClaude·Gemini 대화와 캐시·로그는 휴지통으로 이동합니다. 프로젝트 등록·메모리는 보존하며, 앱 실행 중에는 삭제를 차단합니다."
         if any(e.provider == "Codex" for e in selected):
             methods += f"\n사용할 Codex CLI: {codex}"
+        if has_artifacts:
+            methods += "\n작업 부산물은 항목별 지정 방법(영구 삭제 또는 휴지통)으로 정리합니다. 실행 상태는 삭제 직전에 다시 확인합니다."
+        self.method_summary = label(cleanup_summary(selected, plan), wrap=True)
+        outer.addWidget(self.method_summary)
         outer.addWidget(label(methods, muted=True, wrap=True))
         self.agreed = QCheckBox(textwrap.fill("선택 작업이 종료되었고, 필요한 결과물은 보관했거나 필요 없음을 확인했습니다.", width=64))
         outer.addWidget(self.agreed)
