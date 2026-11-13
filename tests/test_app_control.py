@@ -286,6 +286,17 @@ class StopProcessTests(unittest.TestCase):
         self.assertEqual(command.call_args.args[:2], ("hc", ["server", "stop"]))
         self.assertEqual((left, notes), ([], []))
 
+    def test_stale_herdr_group_does_not_stop_a_replacement_server(self):
+        process = self.spawn()
+        real = runtime.psutil.Process(process.pid)
+        stale = app_control.Target(process.pid, real.create_time() - 100, "herdr-core.exe")
+        group = app_control.AppGroup("Herdr", targets=[stale])
+        with patch.object(app_control, "visible_windows", return_value=[]), \
+                patch.object(runtime, "command") as command:
+            self.assertEqual(app_control.request_close([group], grace=0), ([], []))
+        command.assert_not_called()
+        self.assertIsNone(process.poll())
+
     def test_failed_herdr_command_is_reported_and_leaves_the_decision_to_the_user(self):
         process = self.spawn()
         group = app_control.snapshot([self.row(process, "Herdr")])[0]
