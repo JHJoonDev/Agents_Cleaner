@@ -4,6 +4,12 @@ __pycache__/
 .pytest_cache/
 .qa-*.log
 .hypothesis/
+.venv/
+.mutation-reports/
+.stryker-tmp/
+test-results/
+playwright-report/
+logs/
 *.pyc
 reports/
 # Screenshots taken from a real profile stay local
