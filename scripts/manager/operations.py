@@ -1,4 +1,7 @@
 from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
+P=ParamSpec("P")
+R=TypeVar("R")
 
 import json
 import functools
@@ -26,9 +29,9 @@ CODEX_DELETE_TIMEOUT = 30
 _mutation_lock = threading.Lock()
 
 
-def _exclusive(function):
+def _exclusive(function: Callable[P,R]) -> Callable[P,R]:
     @functools.wraps(function)
-    def guarded(*args, **kwargs):
+    def guarded(*args: P.args, **kwargs: P.kwargs) -> R:
         if not _mutation_lock.acquire(blocking=False):
             raise RuntimeError("다른 정리 작업이 진행 중임")
         try:
@@ -38,19 +41,19 @@ def _exclusive(function):
     return guarded
 
 
-def _no_links(path):
+def _no_links(path: Path) -> None:
     for part in (Path(path).absolute(), *Path(path).absolute().parents):
         if part.exists() or part.is_symlink():
             if is_link(part):
                 raise ValueError(f"링크·junction 경로는 사용하지 않음: {part}")
 
 
-def _checked_nodes(path, home):
+def _checked_nodes(path: Path, home: Path) -> Iterator[Path]:
     safe_path(path, home)
     yield path
     if path.is_file():
         return
-    def fail(exc):
+    def fail(exc: Any) -> None:
         raise exc
     for parent, dirs, files in os.walk(path, followlinks=False, onerror=fail):
         dirs.sort()
@@ -63,25 +66,26 @@ def _checked_nodes(path, home):
             yield item
 
 
-def _checked_files(path, home):
+def _checked_files(path: Path, home: Path) -> Iterator[Path]:
     return (item for item in _checked_nodes(path, home) if item.is_file())
 
 
-def _identity(path):
+def _identity(path: Path) -> Any:
     info = Path(path).lstat()
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_mode
 
 
-def _target_state(path, home):
+def _target_state(path: Path, home: Path) -> Any:
     digest = hashlib.sha256(repr(_identity(path)).encode())
     for item in _checked_nodes(path, home):
         digest.update(repr((str(item), _identity(item))).encode())
     return digest.digest()
 
 
-def _project_state(folder, home, entries, removed=None):
+def _project_state(folder: Path, home: Path, entries: Sequence[Entry], removed: Any=None) -> Any:
     if removed is None:
         removed = {p.resolve() for e in entries for p in e.files}
+    rows: list[Any]
     rows = []
     for path in _checked_files(folder, home):
         resolved = path.resolve()
@@ -90,7 +94,7 @@ def _project_state(folder, home, entries, removed=None):
     return hashlib.sha256(repr(rows).encode()).digest()
 
 
-def _stopped(detector, entries, workspace=False):
+def _stopped(detector: Any, entries: Sequence[Entry], workspace: bool=False) -> None:
     live = detector()
     if not isinstance(live, (set, frozenset)) or not live.issubset(PROVIDERS):
         raise RuntimeError("실행 상태를 확인하지 못해 삭제를 차단함")
@@ -101,9 +105,9 @@ def _stopped(detector, entries, workspace=False):
             raise RuntimeError(f"{entry.provider}, Orca 또는 Herdr가 실행 중임. 앱과 CLI를 닫은 뒤 삭제")
 
 
-def _snapshot_database(source, target, timeout=8):
+def _snapshot_database(source: Path, target: Any, timeout: float=8) -> None:
     deadline = time.monotonic() + timeout
-    def progress(_status, _remaining, _total):
+    def progress(_status: Any, _remaining: Any, _total: Any) -> None:
         if time.monotonic() >= deadline:
             raise TimeoutError("SQLite 백업 시간 초과. 원본은 삭제하지 않음")
     with read_db(source) as src, sqlite3.connect(target, factory=ClosingConnection) as dst:
@@ -111,7 +115,7 @@ def _snapshot_database(source, target, timeout=8):
         src.backup(dst, pages=256, progress=progress, sleep=0.05)
 
 
-def validate(entry: Entry):
+def validate(entry: Entry) -> None:
     if entry.kind == "artifact":
         artifacts.validate_shape(entry)
         if entry.blocked:
@@ -165,6 +169,7 @@ def validate(entry: Entry):
         if not row or abs(float(row[0]) - entry.updated) > 1:
             raise ValueError("대화가 변경되었음. 새로고침 후 다시 선택")
         if "rollout_candidates" in entry.extra:
+            candidates: list[Any]
             candidates = []
             if "rollout_path" in columns and row["rollout_path"]:
                 rollout = Path(row["rollout_path"])
@@ -175,7 +180,7 @@ def validate(entry: Entry):
                 raise ValueError("대화 파일 경로가 변경됨. 새로고침 후 다시 선택")
 
 
-def backup(entries, destination: Path, project_groups, include_caches=True, workspaces=()):
+def backup(entries: Sequence[Entry], destination: Path, project_groups: Any, include_caches: bool=True, workspaces: Any=()) -> Path | None:
     entries = [e for e in entries if e.kind != "artifact"]
     if not entries and not workspaces:
         return None
@@ -200,8 +205,14 @@ def backup(entries, destination: Path, project_groups, include_caches=True, work
     filename = filename.with_suffix(".zip.partial")
     destination_id = _identity(destination)[:2]
     try:
+        dbs: set[Any]
+        paths: dict[Any,Any]
+        states: dict[Any,Any]
         paths, dbs, states = {}, set(), {}
+        metadata_homes: set[Any]
+        project_folders: set[Any]
         metadata_homes, project_folders = set(), set()
+        manifest: list[Any]
         manifest = []
         for e in entries:
             validate(e)
@@ -284,7 +295,7 @@ def backup(entries, destination: Path, project_groups, include_caches=True, work
             pass
 
 
-def trim_claude_history(home, sessions, before_replace=None):
+def trim_claude_history(home: Path, sessions: Any, before_replace: Any=None) -> None:
     path = home / "history.jsonl"
     if not path.exists():
         return
@@ -313,7 +324,7 @@ def trim_claude_history(home, sessions, before_replace=None):
         Path(name).unlink(missing_ok=True)
 
 
-def validate_project_folder(entry, folder):
+def validate_project_folder(entry: Entry, folder: Path) -> None:
     safe_path(folder, entry.home)
     parts = folder.relative_to(entry.home).parts
     expected = "projects" if entry.provider == "Claude" else "tmp"
@@ -325,7 +336,7 @@ def validate_project_folder(entry, folder):
             raise ValueError("원본 프로젝트를 포함해 보존함")
 
 
-def _remove_artifact(path, home, expected_state):
+def _remove_artifact(path: Path, home: Path, expected_state: Any) -> None:
     """Remove only the verified tree, refusing reparse points at every boundary."""
     nodes = [(p, _identity(p)) for p in _checked_nodes(path, home)]
     if _target_state(path, home) != expected_state:
@@ -343,8 +354,8 @@ def _remove_artifact(path, home, expected_state):
 
 
 @_exclusive
-def delete(entries, expected, destination=None, project_groups=(), detector=active_providers, runner=command,
-           recycler=recycle, include_caches=True, workspaces=(), all_entries=None, create_backup=False):
+def delete(entries: Iterable[Entry], expected: Any, destination: Path | None=None, project_groups: Any=(), detector: Any=active_providers, runner: Any=command,
+           recycler: Any=recycle, include_caches: bool=True, workspaces: Any=(), all_entries: Any=None, create_backup: bool=False) -> tuple[Path | None,list[Entry],list[tuple[str,str]],list[str]]:
     if not entries:
         raise ValueError("선택한 항목 없음")
     entries, workspaces, project_groups = list(entries), tuple(workspaces), set(project_groups)
@@ -356,6 +367,10 @@ def delete(entries, expected, destination=None, project_groups=(), detector=acti
         if reason:
             raise ValueError(f"작업 폴더 {path}: {reason}")
     _stopped(detector, entries, workspace=bool(workspaces))
+    artifact_errors: dict[Any,Any]
+    project_states: dict[Any,Any]
+    states: dict[Any,Any]
+    workspace_states: dict[Any,Any]
     states, workspace_states, project_states, artifact_errors = {}, {}, {}, {}
     removed_paths = {p.resolve() for e in entries for p in e.files}
     for path in workspaces:
@@ -380,18 +395,22 @@ def delete(entries, expected, destination=None, project_groups=(), detector=acti
             folder = Path(e.extra["project_dir"])
             validate_project_folder(e, folder)
             project_states[e.group] = _project_state(folder, e.home, entries, removed_paths)
-    archive = backup(entries, Path(destination), project_groups, include_caches, workspaces) if create_backup and (
+    archive = backup(entries, Path(cast(Path,destination)), project_groups, include_caches, workspaces) if create_backup and (
         any(e.kind != "artifact" for e in entries) or workspaces) else None
     archive_state = _identity(archive) if archive is not None else None
-    def check_archive():
+    def check_archive() -> None:
         if archive is None:
             return
         _no_links(archive)
         if _identity(archive) != archive_state:
             raise ValueError("검증된 백업이 변경되어 삭제를 중단함")
+    claude_ids: dict[Any,Any]
+    failed: list[Any]
+    notes: list[Any]
+    succeeded: list[Any]
     succeeded, failed, notes, claude_ids = [], [], [], {}
     aborted = ""
-    def stopped(targets, workspace=False):
+    def stopped(targets: Any, workspace: bool=False) -> None:
         nonlocal aborted
         if aborted:
             raise RuntimeError(aborted)
@@ -437,7 +456,7 @@ def delete(entries, expected, destination=None, project_groups=(), detector=acti
                 env.pop("CODEX_SQLITE_HOME", None)
                 options = {"env": env, "timeout": CODEX_DELETE_TIMEOUT}
                 if runner is command:
-                    def before_run():
+                    def before_run() -> None:
                         validate(e)
                         if signature(e) != expected[e.key]:
                             raise ValueError("CLI 탐색 중 대상이 변경됨")
@@ -473,7 +492,7 @@ def delete(entries, expected, destination=None, project_groups=(), detector=acti
     for home, ids in claude_ids.items():
         try:
             stopped([e for e in entries if e.home == home])
-            def before_replace():
+            def before_replace() -> None:
                 stopped([e for e in entries if e.home == home])
                 check_archive()
             trim_claude_history(home, ids, before_replace=before_replace)
@@ -542,7 +561,7 @@ def delete(entries, expected, destination=None, project_groups=(), detector=acti
     return archive, succeeded, failed, notes
 
 
-def list_backups(folder: Path = DEFAULT_BACKUP_DIR):
+def list_backups(folder: Path = DEFAULT_BACKUP_DIR) -> list[tuple[Path,int,float]]:
     folder = Path(folder)
     if not folder.is_dir():
         return []
@@ -551,12 +570,14 @@ def list_backups(folder: Path = DEFAULT_BACKUP_DIR):
 
 
 @_exclusive
-def remove_backups(paths, folder: Path = DEFAULT_BACKUP_DIR):
+def remove_backups(paths: Any, folder: Path = DEFAULT_BACKUP_DIR) -> Any:
     """Permanently delete backup ZIPs this program created. Nothing else is accepted."""
     paths = list(map(Path, paths))
     _no_links(folder)
     root = Path(folder).resolve()
+    removed: list[Any]
     removed = []
+    states: dict[Any,Any]
     states = {}
     for p in paths:
         _no_links(p)

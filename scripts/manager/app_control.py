@@ -1,5 +1,6 @@
 """Close AI apps when the user asks. Nothing here runs automatically or decides what may be deleted."""
 from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 
 import ctypes
 import os
@@ -26,9 +27,9 @@ class Target:
 @dataclass
 class AppGroup:
     name: str
-    rows: list = field(default_factory=list)
-    targets: list = field(default_factory=list)   # The app's own processes.
-    children: list = field(default_factory=list)  # Whatever they started (shells, dev servers...).
+    rows: list[dict[str,Any]] = field(default_factory=list)
+    targets: list[Target] = field(default_factory=list)   # The app's own processes.
+    children: list[Target] = field(default_factory=list)  # Whatever they started (shells, dev servers...).
     memory: int = 0
     windows: int = 0
     agents: int = 0
@@ -36,10 +37,10 @@ class AppGroup:
     holds_self: bool = False
 
     @property
-    def stoppable(self):
+    def stoppable(self) -> bool:
         return bool(self.targets) and not self.holds_self
 
-    def describe(self):
+    def describe(self) -> str:
         parts = [f"창 {self.windows}개" if self.windows else "창 없음(터미널·백그라운드)"]
         if self.agents:
             parts.append(f"에이전트 {self.agents}개" + (f"(작업 중 {self.busy}개)" if self.busy else ""))
@@ -50,13 +51,13 @@ class AppGroup:
         return " · ".join(parts)
 
 
-def group_name(row):
+def group_name(row: dict[str,Any]) -> str:
     if row["app"] == "Claude":
         return "Claude 데스크톱" if runtime.is_claude_desktop(row) else "Claude Code"
-    return row["app"]
+    return cast(str,row["app"])
 
 
-def visible_windows():
+def visible_windows() -> list[tuple[int,int]]:
     """(hwnd, pid) of the windows a user could close: visible, titled, not owned by another window."""
     if os.name != "nt":
         return []
@@ -65,9 +66,10 @@ def visible_windows():
     user32.GetWindow.argtypes, user32.GetWindow.restype = [wintypes.HWND, wintypes.UINT], wintypes.HWND
     user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
     user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    found: list[Any]
     found = []
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def visit(hwnd, _):
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)  # type: ignore[untyped-decorator]  # ctypes callback adapter
+    def visit(hwnd: int, _: Any) -> Any:
         if user32.IsWindowVisible(hwnd) and not user32.GetWindow(hwnd, GW_OWNER) and user32.GetWindowTextLengthW(hwnd):
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
@@ -78,13 +80,13 @@ def visible_windows():
     return found
 
 
-def close_window(hwnd):
+def close_window(hwnd: int) -> bool:
     user32 = ctypes.WinDLL("user32")
     user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
     return bool(user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
 
 
-def protected_pids():
+def protected_pids() -> set[int]:
     """This program and what started it. Stopping one of these would stop this program mid-work."""
     if runtime.psutil is None:
         return {os.getpid()}
@@ -92,11 +94,11 @@ def protected_pids():
     return {me.pid, *(p.pid for p in me.parents())}
 
 
-def _target(process):
+def _target(process: Any) -> Target:
     return Target(process.pid, process.create_time(), process.name())
 
 
-def _note_agent(group, seen, pid, app, path):
+def _note_agent(group: Any, seen: Any, pid: int, app: Any, path: Any) -> None:
     """Count what stopping this group would interrupt, including sessions an app hosts."""
     if pid in seen or app not in {"Codex", "Claude", "Gemini"} or runtime.is_claude_desktop({"path": path}):
         return
@@ -106,8 +108,10 @@ def _note_agent(group, seen, pid, app, path):
         group.busy += (runtime.claude_session(pid) or {}).get("status") == "busy"
 
 
-def snapshot(processes):
+def snapshot(processes: Any) -> Any:
     """Group detected processes by app. A process that cannot be identified is shown but never targeted."""
+    agents: dict[Any,Any]
+    groups: dict[Any,Any]
     psutil, groups, agents = runtime.psutil, {}, {}
     protected, windows = protected_pids(), Counter(pid for _, pid in visible_windows())
     for row in processes:
@@ -145,7 +149,7 @@ def snapshot(processes):
     return sorted(groups.values(), key=lambda g: g.name.casefold())
 
 
-def _alive(target):
+def _alive(target: Target) -> Any:
     """The same process, not a new one that reused its PID."""
     psutil = runtime.psutil
     try:
@@ -155,17 +159,18 @@ def _alive(target):
         return None
 
 
-def remaining(targets):
+def remaining(targets: Sequence[Target]) -> list[Target]:
     protected = protected_pids()
     return [t for t in targets if t.pid not in protected and _alive(t)]
 
 
-def request_close(groups, grace=GRACE_SECONDS):
+def request_close(groups: Sequence[AppGroup], grace: float=GRACE_SECONDS) -> tuple[list[Target],list[str]]:
     """Ask nicely: close windows, stop the Herdr server, wait. Returns (still running, notes)."""
     if any(g.holds_self for g in groups):
         raise RuntimeError("이 프로그램이 해당 앱 안에서 실행 중이라 종료할 수 없습니다.")
     targets = list(dict.fromkeys(t for g in groups for t in (*g.targets, *g.children)))
     own = {t.pid: t for g in groups for t in g.targets}
+    notes: list[Any]
     asked, notes = False, []
     for hwnd, pid in visible_windows():
         if pid in own and _alive(own[pid]) and close_window(hwnd):
@@ -187,9 +192,11 @@ def request_close(groups, grace=GRACE_SECONDS):
         time.sleep(.2)
 
 
-def force_stop(targets):
+def force_stop(targets: Sequence[Target]) -> tuple[list[Target],list[str]]:
     """Terminate these processes and anything they started since. Returns (still running, notes)."""
     psutil = runtime.psutil
+    notes: list[Any]
+    victims: dict[Any,Any]
     protected, victims, notes = protected_pids(), {}, []
     for target in targets:
         process = None if target.pid in protected else _alive(target)
@@ -214,7 +221,7 @@ def force_stop(targets):
     return remaining(targets), notes
 
 
-def stop_summary(groups):
+def stop_summary(groups: Sequence[AppGroup]) -> str:
     lines = [f"· {g.name}: 프로세스 {len(g.targets)}개, {g.describe()}, 메모리 {readable_size(g.memory)}" for g in groups]
     text = "다음 앱을 종료합니다.\n\n" + "\n".join(lines) + "\n\n창을 닫아 정상 종료를 요청합니다. 그래도 남는 프로세스는 다시 확인한 뒤 강제 종료합니다."
     if any(g.agents for g in groups):
@@ -222,7 +229,7 @@ def stop_summary(groups):
     return text
 
 
-def leftovers_summary(targets, notes=()):
+def leftovers_summary(targets: Sequence[Target], notes: Any=()) -> str:
     names = Counter(t.name for t in targets)
     listed = ", ".join(f"{name} {count}개" for name, count in names.most_common())
     extra = "".join(f"\n{note}" for note in notes)

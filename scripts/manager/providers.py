@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 
 import json
 import os
@@ -15,7 +16,7 @@ from .herdr import storage_root, terminals
 SCAN_ERRORS = (OSError, ValueError, KeyError, TypeError, sqlite3.Error, RuntimeError)
 
 
-def _plain_stat(path):
+def _plain_stat(path: Path) -> os.stat_result | None:
     try:
         info = path.lstat()
         return None if _link_stat(info) else info
@@ -23,7 +24,7 @@ def _plain_stat(path):
         return None
 
 
-def _children(folder, errors=None, provider=""):
+def _children(folder: Path, errors: list[str] | None=None, provider: str="") -> Iterator[Any]:
     info = _plain_stat(folder)
     if info is None or not stat.S_ISDIR(info.st_mode):
         return
@@ -40,20 +41,20 @@ def _children(folder, errors=None, provider=""):
                 yield Path(child.path), info
 
 
-def _error(errors, provider, home, exc):
+def _error(errors: list[str] | None, provider: Any, home: str | Path, exc: Any) -> None:
     if errors is None:
         raise exc
     errors.append(f"{provider} ({home}): {exc}")
 
 
-def valid_id(value):
+def valid_id(value: Any) -> bool:
     try:
         return str(uuid.UUID(str(value))) == str(value).lower()
     except (ValueError, TypeError):
         return False
 
 
-def stamp(value, fallback):
+def stamp(value: Any, fallback: float) -> float:
     try:
         if isinstance(value, (int, float)):
             result = value / 1000 if value > 10**11 else value
@@ -69,7 +70,7 @@ def stamp(value, fallback):
             return 0
 
 
-def clean_path(value):
+def clean_path(value: object) -> str:
     # Codex stores Windows extended-length paths (\\?\C:\...). Show and compare them as normal paths.
     value = str(value or "")
     if value.startswith(r"\\?\UNC" + "\\"):
@@ -77,7 +78,7 @@ def clean_path(value):
     return value[4:] if value.startswith(r"\\?" + "\\") else value
 
 
-def codex(home: Path, errors=None):
+def codex(home: Path, errors: list[str] | None=None) -> list[Entry]:
     dbs = sorted((p for p, info in _children(home, errors, "Codex") if stat.S_ISREG(info.st_mode)
                   and p.name.startswith("state_") and p.suffix == ".sqlite"
                   and p.stem[6:].isascii() and p.stem[6:].isdigit()),
@@ -85,7 +86,9 @@ def codex(home: Path, errors=None):
     if not dbs:
         return []
     db = dbs[0]
+    result: list[Any]
     result = []
+    parents: dict[Any,Any]
     resolved_home, parents = home.resolve(), {}
     with read_db(db) as conn:
         cols = {r[1] for r in conn.execute("pragma table_info(threads)")}
@@ -99,6 +102,8 @@ def codex(home: Path, errors=None):
             if not valid_id(r["id"]):
                 continue
             try:
+                candidates: list[Any]
+                files: list[Any]
                 files, blocked, candidates = [], "", []
                 raw = r.get("rollout_path")
                 if raw:
@@ -139,9 +144,11 @@ def codex(home: Path, errors=None):
     return result
 
 
-def claude(home: Path, errors=None):
+def claude(home: Path, errors: list[str] | None=None) -> list[Entry]:
+    result: list[Any]
     result = []
     projects = home / "projects"
+    extra_bases: list[Any]
     extra_bases = []
     for name in ("file-history", "session-env", "debug"):
         base = home / name
@@ -164,7 +171,7 @@ def claude(home: Path, errors=None):
     return result
 
 
-def _claude_entry(home, folder, p, info, extra_bases):
+def _claude_entry(home: Path, folder: Path, p: Any, info: Any, extra_bases: Any) -> Any:
     cwd, title = "", ""
     # Bounded metadata read; never execute transcript contents.
     with p.open("r", encoding="utf-8", errors="replace") as stream:
@@ -200,7 +207,8 @@ def _claude_entry(home, folder, p, info, extra_bases):
                  info.st_mtime, files, extra={"project_dir": str(folder)})
 
 
-def gemini(home: Path, errors=None):
+def gemini(home: Path, errors: list[str] | None=None) -> list[Entry]:
+    result: list[Any]
     result = []
     tmp = home / "tmp"
     for folder, folder_info in _children(tmp, errors, "Gemini"):
@@ -237,7 +245,7 @@ def gemini(home: Path, errors=None):
                                 value = message.get("content", "")
                                 title = value if isinstance(value, str) else ""
                                 break
-                    result.append(Entry("Gemini", home, session, str(title or session)[:140], cwd,
+                    result.append(Entry("Gemini", home, cast(str,session), str(title or session)[:140], cwd,
                                         stamp(row.get("lastUpdated"), info.st_mtime), [p],
                                         extra={"project_dir": str(folder)}, blocked=blocked))
                 except SCAN_ERRORS as exc:
@@ -247,11 +255,11 @@ def gemini(home: Path, errors=None):
     return result
 
 
-def profile_roots(user_home=None, roaming=None, errors=None):
+def profile_roots(user_home: Path | None=None, roaming: Path | None=None, errors: list[str] | None=None) -> list[tuple[str,Path]]:
     from .runtime import claude_homes
     user_home = Path(user_home or Path.home())
-    roaming = Path(roaming or os.environ.get("APPDATA", user_home / "AppData" / "Roaming"))
-    roots = [("Codex", Path(os.environ.get("CODEX_HOME", user_home / ".codex")))]
+    roaming = Path(roaming or cast(Any,os.environ.get("APPDATA", user_home / "AppData" / "Roaming")))
+    roots = [("Codex", Path(cast(Any,os.environ.get("CODEX_HOME", user_home / ".codex"))))]
     try:
         roots.extend(("Claude", p) for p in claude_homes(user_home))
     except SCAN_ERRORS as exc:
@@ -281,6 +289,8 @@ def profile_roots(user_home=None, roaming=None, errors=None):
                 roots.append(("Codex", runtime / "home"))
     except SCAN_ERRORS as exc:
         _error(errors, "Orca", base, exc)
+    found: list[Any]
+    seen: set[Any]
     seen, found = set(), []
     for provider, p in roots:
         try:
@@ -304,7 +314,9 @@ CACHES = {"Codex": [".tmp", "tmp", "log", "cache"],
           "Herdr": ["core.log", "holder.log"]}
 
 
-def scan(roots=None, include_artifacts=None):
+def scan(roots: Sequence[tuple[str,Path]] | None=None, include_artifacts: Any=None) -> tuple[list[Entry],list[str]]:
+    entries: list[Any]
+    errors: list[Any]
     entries, errors = [], []
     selected_roots = list(roots) if roots is not None else profile_roots(errors=errors)
     if roots is None:
@@ -321,6 +333,7 @@ def scan(roots=None, include_artifacts=None):
                 selected_roots.append(("Orca", orca_root.resolve()))
         except SCAN_ERRORS as exc:
             _error(errors, "Orca", orca_root, exc)
+    seen: set[Any]
     seen = set()
     for provider, home in selected_roots:
         try:
@@ -346,6 +359,7 @@ def scan(roots=None, include_artifacts=None):
                                          info.st_mtime, [p], "cache"))
             except SCAN_ERRORS as exc:
                 _error(errors, provider, p, exc)
+    project_paths: list[Any]
     project_paths = []
     for project in dict.fromkeys(e.project for e in entries if e.kind == "conversation"):
         try:
@@ -353,6 +367,7 @@ def scan(roots=None, include_artifacts=None):
                 project_paths.append(str(Path(project).resolve()))
         except SCAN_ERRORS as exc:
             _error(errors, "프로젝트 경로", "", exc)
+    unique: dict[Any,Any]
     unique = {}
     for e in entries:
         previous = unique.get(e.key)

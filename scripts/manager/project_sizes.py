@@ -1,4 +1,6 @@
 """Project disk usage. Scanning/reporting never deletes files."""
+from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 from dataclasses import dataclass, field
 from datetime import datetime
 import hashlib
@@ -20,11 +22,11 @@ BULK = {"uploads", "upload", "output", "outputs", "temp", "tmp"}
 SOURCE = {".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".c", ".cpp", ".h", ".java", ".cs", ".go", ".swift", ".kt", ".sql"}
 
 
-def settings_path():
+def settings_path() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Agents_Cleaner/size-roots.json"
 
 
-def configured_roots():
+def configured_roots() -> list[Path]:
     try:
         data = json.loads(settings_path().read_text(encoding="utf8"))
         return [Path(x) for x in data["roots"] if isinstance(x, str)] or [DEFAULT_ROOT]
@@ -32,13 +34,13 @@ def configured_roots():
         return [DEFAULT_ROOT]
 
 
-def save_roots(roots):
+def save_roots(roots: Iterable[Path]) -> None:
     target = settings_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps({"roots": [str(x) for x in roots]}, ensure_ascii=False, indent=2), encoding="utf8")
 
 
-def protected(path):
+def protected(path: Path) -> bool:
     name = path.name.lower()
     return name in DATA_DIRS or name.startswith(("toxauto-", "dataset")) or name == ".env" or name.startswith(".env.") or path.suffix.lower() in {".db", ".sqlite", ".sqlite3", ".pem", ".key"} or name.endswith((".db-wal", ".db-shm"))
 
@@ -56,15 +58,15 @@ class Candidate:
 class Project:
     path: Path
     size: int = 0
-    candidates: list = field(default_factory=list)
-    errors: list = field(default_factory=list)
+    candidates: list[Candidate] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
     @property
-    def reclaimable(self):
+    def reclaimable(self) -> int:
         return sum(x.size for x in self.candidates if not x.blocked)
 
 
-def measure(path, errors):
+def measure(path: Path, errors: list[str]) -> tuple[int,str,str]:
     """No junction/symlink traversal, including under candidate directories."""
     digest = hashlib.sha256()
     size, blocked = 0, ""
@@ -92,12 +94,12 @@ def measure(path, errors):
     return size, digest.hexdigest(), blocked
 
 
-def cache_name(name):
+def cache_name(name: str) -> bool:
     name = name.lower()
     return name in CACHES or name.startswith((".venv", "venv"))
 
 
-def scan_project(path, large=LARGE):
+def scan_project(path: Path, large: int=LARGE) -> Project:
     project = Project(path)
     pending = [path]
     while pending:
@@ -145,7 +147,10 @@ def scan_project(path, large=LARGE):
     return project
 
 
-def scan_roots(roots=None, large=LARGE):
+def scan_roots(roots: Iterable[Path] | None=None, large: int=LARGE) -> tuple[list[Project],list[str]]:
+    errors: list[Any]
+    projects: list[Any]
+    seen: set[Any]
     projects, errors, seen = [], [], set()
     for root in roots or configured_roots():
         root = Path(root).absolute()
@@ -171,7 +176,7 @@ def scan_roots(roots=None, large=LARGE):
 
 
 @_exclusive
-def recycle_candidate(candidate, project):
+def recycle_candidate(candidate: Candidate, project: Project) -> None:
     """Only called by the GUI after checkbox selection and explicit confirmation."""
     from .recycle import recycle
     from . import artifacts, runtime, workspaces
@@ -201,8 +206,8 @@ def recycle_candidate(candidate, project):
     recycle(path)
 
 
-def write_report(projects, errors, target):
-    def cell(value):
+def write_report(projects: Any, errors: list[str], target: str | Path) -> Path:
+    def cell(value: Any) -> Any:
         return str(value).replace("|", "\\|").replace("\n", " ")
     lines = [f"# 프로젝트 용량 {datetime.now().isoformat(timespec='seconds')}",
              "조회 전용. 자동 삭제 없음. 보호/접근 실패 항목은 회수 가능량에서 제외.",
@@ -224,7 +229,7 @@ def write_report(projects, errors, target):
     return target
 
 
-def notify_report(projects, target):
+def notify_report(projects: Any, target: Any) -> Any:
     import sys
     # Optional external notifier: a folder whose worker_b_common.py exposes notify(text).
     module_dir = os.environ.get("AGENTS_CLEANER_NOTIFIER_DIR")

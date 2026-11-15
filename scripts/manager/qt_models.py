@@ -1,4 +1,6 @@
 """Qt presentation models and the shared background task wrapper."""
+from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 from datetime import datetime
 from PySide6.QtCore import QObject, QRunnable, QSortFilterProxyModel, Qt, QRect, Signal, QEvent
 from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QStandardItem, QStandardItemModel
@@ -20,11 +22,14 @@ class Signals(QObject):
 
 class Task(QRunnable):
     """Always report termination, including SystemExit in third-party readers."""
-    def __init__(self, function, event):
+    event: Any
+    function: Any
+    signals: Any
+    def __init__(self, function: Any, event: Any) -> None:
         super().__init__()
         self.function, self.event, self.signals = function, event, Signals()
 
-    def run(self):
+    def run(self) -> None:
         try:
             result, error = self.function(), None
         except BaseException as exc:
@@ -32,7 +37,7 @@ class Task(QRunnable):
         self.signals.done.emit(self.event, result, error)
 
 
-def item(text="", sort=None, numeric=False):
+def item(text: str="", sort: Any=None, numeric: bool=False) -> Any:
     value = QStandardItem(str(text))
     value.setEditable(False)
     value.setData(str(text).casefold() if sort is None else sort, SORT)
@@ -42,7 +47,7 @@ def item(text="", sort=None, numeric=False):
     return value
 
 
-def display_date(timestamp):
+def display_date(timestamp: Any) -> Any:
     try:
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M") if timestamp else ""
     except (OverflowError, OSError, ValueError):
@@ -50,7 +55,9 @@ def display_date(timestamp):
 
 
 class RecordModel(QStandardItemModel):
-    def __init__(self, parent=None):
+    group_items: Any
+    record_items: Any
+    def __init__(self, parent: Any=None) -> None:
         super().__init__(parent)
         self.setHorizontalHeaderLabels(HEADERS)
         self.record_items = {}
@@ -58,18 +65,19 @@ class RecordModel(QStandardItemModel):
 
 
 class RecordProxy(QSortFilterProxyModel):
-    def __init__(self, parent=None):
+    query: Any
+    def __init__(self, parent: Any=None) -> None:
         super().__init__(parent)
         self.query = ""
         self.setSortRole(SORT)
         self.setFilterRole(SEARCH)
 
-    def set_query(self, text):
+    def set_query(self, text: Any) -> None:
         self.beginFilterChange()
         self.query = text.strip().casefold()
         self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
 
-    def filterAcceptsRow(self, row, parent):
+    def filterAcceptsRow(self, row: Any, parent: Any) -> Any:
         if parent.isValid():
             # The parent already passed the group search. Do not search its
             # full conversation text again for each of its children.
@@ -77,7 +85,7 @@ class RecordProxy(QSortFilterProxyModel):
         idx = self.sourceModel().index(row, 0, parent)
         return not self.query or self.query in (idx.data(SEARCH) or "")
 
-    def lessThan(self, left, right):
+    def lessThan(self, left: Any, right: Any) -> Any:
         a, b = left.data(SORT), right.data(SORT)
         if isinstance(a, (int, float)) and isinstance(b, (int, float)):
             return a < b
@@ -86,7 +94,7 @@ class RecordProxy(QSortFilterProxyModel):
 
 class FolderCheckDelegate(QStyledItemDelegate):
     """Make the folder checkbox and its label one click target."""
-    def editorEvent(self, event, model, option, index):
+    def editorEvent(self, event: Any, model: Any, option: Any, index: Any) -> Any:
         if index.flags() & Qt.ItemFlag.ItemIsUserCheckable:
             if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
                 return event.button() == Qt.MouseButton.LeftButton
@@ -102,11 +110,12 @@ class FolderCheckDelegate(QStyledItemDelegate):
 
 class SizeDelegate(QStyledItemDelegate):
     """56 x 7px ratio track left of the right-aligned number."""
-    def __init__(self, parent=None):
+    total: Any
+    def __init__(self, parent: Any=None) -> None:
         super().__init__(parent)
         self.total = 0
 
-    def paint(self, painter, option, index):
+    def paint(self, painter: Any, option: Any, index: Any) -> None:
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         text = opt.text
@@ -128,12 +137,12 @@ class SizeDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-def mark_row(row, checked):
+def mark_row(row: Any, checked: Any) -> None:
     for cell in row:
         cell.setBackground(QBrush(QColor("#274963")) if checked else QBrush())
 
 
-def exception(cell, text):
+def exception(cell: Any, text: Any) -> None:
     cell.setText(text)
     cell.setData(text.casefold(), SORT)
     cell.setForeground(QBrush(QColor("#9da2aa")))
@@ -141,7 +150,7 @@ def exception(cell, text):
     cell.setIcon(icon("lock") if text else QIcon())
 
 
-def size_item(amount, has_files=True):
+def size_item(amount: Any, has_files: bool=True) -> Any:
     value = item(readable_size(amount) if has_files else "DB 항목만", amount, True)
     value.setData(amount if has_files else None, BYTES)
     return value

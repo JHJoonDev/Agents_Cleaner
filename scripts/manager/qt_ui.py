@@ -1,4 +1,6 @@
 """PySide6 implementation of design/option-b2.html. Tk stays as a fallback."""
+from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QSize
@@ -15,9 +17,33 @@ from .qt_style import app_icon, configure, icon, label, message
 
 
 class App(QMainWindow, Logic):
-    def __init__(self, roots=None, allow_delete=True, auto_refresh=True):
+    _available_keys: Any
+    _closing: Any
+    _display_checked: Any
+    _updating: Any
+    actions: Any
+    detail_app: Any
+    detail_folder: Any
+    detail_hint: Any
+    detail_store: Any
+    detail_title: Any
+    folder_delegate: Any
+    model: Any
+    proxy: Any
+    review_button: Any
+    search: Any
+    selection_sub: Any
+    selection_summary: Any
+    size_delegate: Any
+    size_tab: Any
+    splitter: Any
+    startup_timer: Any
+    status_text: Any
+    tabs: Any
+    tree: Any
+    def __init__(self, roots: Any=None, allow_delete: bool=True, auto_refresh: bool=True) -> None:
         super().__init__()
-        configure(QApplication.instance())
+        configure(cast(QApplication,QApplication.instance()))
         self.initialize_logic(roots, allow_delete)
         self.setWindowTitle("AI 기록 정리")
         self.setWindowIcon(app_icon())
@@ -38,7 +64,7 @@ class App(QMainWindow, Logic):
             self.startup_timer.start(0)
             self.monitor_timer.start()
 
-    def fit_to_screen(self, width, height, frame=40):
+    def fit_to_screen(self, width: Any, height: Any, frame: int=40) -> None:
         # Keep the title bar inside the work area on scaled screens or with a top taskbar.
         screen = self.screen() or QApplication.primaryScreen()
         if screen is None:
@@ -51,7 +77,7 @@ class App(QMainWindow, Logic):
         self.move(area.x() + max(0, (area.width() - width) // 2),
                   area.y() + max(0, (area.height() - height - frame) // 2))
 
-    def action(self, key, title, callback, name=None, shortcut=None):
+    def action(self, key: Any, title: Any, callback: Any, name: Any=None, shortcut: Any=None) -> Any:
         action = QAction(icon(name or "app"), title, self)
         action.triggered.connect(callback)
         if shortcut:
@@ -59,7 +85,7 @@ class App(QMainWindow, Logic):
         self.actions[key] = action
         return action
 
-    def build_actions(self):
+    def build_actions(self) -> None:
         self.action("select_all", "전체 선택", self.select_all, "file", "Ctrl+A")
         self.action("refresh", "새로고침", self.refresh, "refresh", "F5")
         self.action("clear", "선택 해제", self.clear, "clear", "Ctrl+Shift+A")
@@ -81,7 +107,7 @@ class App(QMainWindow, Logic):
             for key in keys:
                 menu.addAction(self.actions[key])
 
-    def build_widgets(self):
+    def build_widgets(self) -> None:
         toolbar = QToolBar("도구 모음", self)
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(16, 16))
@@ -195,7 +221,7 @@ class App(QMainWindow, Logic):
         self.statusBar().addWidget(self.status_text, 1)
         self.statusBar().addPermanentWidget(label("읽기 전용" if not self.allow_delete else "계정·설정 보존", muted=True))
 
-    def update_actions(self):
+    def update_actions(self) -> None:
         for key, action in self.actions.items():
             if key not in {"quit", "about"}:
                 action.setEnabled(not self.busy)
@@ -208,7 +234,7 @@ class App(QMainWindow, Logic):
         if self.process_dialog is not None:
             self.process_dialog.set_busy(self.busy)
 
-    def apply_entry_lock(self, e, row):
+    def apply_entry_lock(self, e: Any, row: Any) -> Any:
         """Set one record's checkbox and lock text. Returns whether it can be selected."""
         selectable = self.can_select(e)
         checkable = Qt.ItemFlag.ItemIsUserCheckable
@@ -218,12 +244,12 @@ class App(QMainWindow, Logic):
         row[0].setToolTip(reason)
         return selectable
 
-    def apply_group_lock(self, row, members):
+    def apply_group_lock(self, row: Any, members: Any) -> None:
         checkable = Qt.ItemFlag.ItemIsUserCheckable
         locked = self.errors or not any(self.can_select(e) for e in members)
         row[0].setFlags(row[0].flags() & ~checkable if locked else row[0].flags() | checkable)
 
-    def update_locks(self):
+    def update_locks(self) -> None:
         """Refresh locks in place, keeping rows, sort order, expansion and scroll position."""
         self._updating = True
         try:
@@ -237,7 +263,7 @@ class App(QMainWindow, Logic):
         self.sync_checks()
         self.show_details(self.tree.currentIndex())
 
-    def render(self):
+    def render(self) -> None:  # type: ignore[override]  # existing application refresh API, not QWidget painting
         self._updating = True
         self.tree.setUpdatesEnabled(False)
         self.proxy.setDynamicSortFilter(False)
@@ -299,7 +325,7 @@ class App(QMainWindow, Logic):
         self.sync_checks()
         self.filter_records(self.search.text())
 
-    def sync_checks(self, force_keys=()):
+    def sync_checks(self, force_keys: Any=()) -> None:
         if not hasattr(self, "model"):
             return
         self._updating = True
@@ -326,7 +352,7 @@ class App(QMainWindow, Logic):
         self.selection_sub.setText(f"작업 폴더 {len(self.workspaces)}개 함께 삭제 · 용량은 검토 단계에서 계산" if self.workspaces else "작업 폴더 보존")
         self.update_actions()
 
-    def item_changed(self, value):
+    def item_changed(self, value: Any) -> None:
         if self._updating:
             return
         node = value.data(NODE) or {}
@@ -341,12 +367,12 @@ class App(QMainWindow, Logic):
             group = tuple(node["group"])
             self.toggle_workspace(group, state) if value.column() == 6 else self.set_records_checked(self.groups[group], state, group)
 
-    def filter_records(self, text):
+    def filter_records(self, text: Any) -> None:
         self.proxy.set_query(text)
         if text:
             self.tree.expandAll()
 
-    def clicked(self, index):
+    def clicked(self, index: Any) -> None:
         source = self.proxy.mapToSource(index)
         node = source.siblingAtColumn(0).data(NODE) or {}
         if index.column() == 6 and node.get("kind") == "project":
@@ -358,7 +384,7 @@ class App(QMainWindow, Logic):
             return
         self.show_details(index)
 
-    def show_details(self, index):
+    def show_details(self, index: Any) -> None:
         if not index.isValid():
             return
         source = self.proxy.mapToSource(index).siblingAtColumn(0)
@@ -383,7 +409,7 @@ class App(QMainWindow, Logic):
             self.detail_folder.setText(node["path"])
             self.detail_hint.setText("Orca 프로젝트 등록은 조회 전용입니다. 앱에서 등록 해제하세요.")
 
-    def closeEvent(self, event):
+    def closeEvent(self, event: Any) -> None:
         if not self.size_tab.close_worker():
             event.ignore()
             message(self, "처리 중", "용량 조회가 끝난 뒤 창을 닫으세요.")

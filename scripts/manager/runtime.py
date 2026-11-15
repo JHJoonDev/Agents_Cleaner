@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast, TYPE_CHECKING
 
 import functools
 import ctypes
@@ -13,29 +14,32 @@ import time
 from pathlib import Path
 
 try:
-    import psutil
+    import psutil as psutil
 except ImportError:
-    psutil = None
+    psutil = None  # type: ignore[assignment]  # optional dependency  # type: ignore[assignment]  # optional dependency
+
+if TYPE_CHECKING:
+    from .model import Entry
 
 PROVIDERS = {"Codex", "Claude", "Gemini", "Orca", "Herdr", "Artifacts"}
 
-ARTIFACT_TIERS = {1: "1 바로 정리", 2: "2 확인 후 정리", 3: "3 개수 제한"}
+ARTIFACT_TIERS: dict[int | None,str] = {1: "1 바로 정리", 2: "2 확인 후 정리", 3: "3 개수 제한"}
 
 
-def entry_group(entry):
+def entry_group(entry: Entry) -> Any:
     if entry.kind == "artifact":
         return (entry.provider, str(entry.home),
                 "작업 부산물 · " + ARTIFACT_TIERS.get(entry.extra.get("tier"), "단계 미확인"))
     return entry.group
 
 
-def entry_kind(entry):
+def entry_kind(entry: Entry) -> Any:
     return {"artifact": "부산물", "cache": "캐시"}.get(
         entry.kind, "터미널" if entry.provider == "Herdr" else "대화")
 
 
-def artifact_details(entry):
-    from .model import readable_size
+def artifact_details(entry: Entry) -> Any:
+    from .model import Entry, readable_size
     method = "영구 삭제" if entry.extra.get("method") == "delete" else "휴지통"
     return (f"경로: {', '.join(str(p) for p in entry.files)}\n"
             f"용량: {readable_size(entry.extra.get('display_size', 0))} · "
@@ -45,21 +49,21 @@ def artifact_details(entry):
             f"차단 사유: {entry.blocked or '없음'}")
 
 
-def cleanup_summary(selected, plan=()):
+def cleanup_summary(selected: Any, plan: Any=()) -> Any:
     """The same deletion/recycle breakdown in Qt and the Tk fallback."""
-    from .model import readable_size
+    from .model import Entry, readable_size
     permanent = [e for e in selected if
                  (e.kind == "artifact" and e.extra.get("method") == "delete")
                  or (e.provider == "Codex" and e.kind == "conversation")]
     recycled = [e for e in selected if e not in permanent]
     folders = [p for p in plan if not p["problem"]]
-    size = lambda rows: sum(e.extra.get("display_size", 0) for e in rows)
+    size: Callable[[list[Entry]],int] = lambda rows: sum(e.extra.get("display_size", 0) for e in rows)
     return (f"영구 삭제: {len(permanent)}개 · {readable_size(size(permanent))}\n"
             f"휴지통 이동: {len(recycled) + len(folders)}개 · "
             f"{readable_size(size(recycled) + sum(p['size'] for p in folders))}")
 
 
-def claude_homes(user_home=None):
+def claude_homes(user_home: Path | None=None) -> list[Path]:
     """Plain Claude homes, including launcher accounts; never follow links/junctions."""
     from .model import is_link
     user = Path(user_home or Path.home())
@@ -69,6 +73,8 @@ def claude_homes(user_home=None):
                       and not is_link(p / "projects") and (p / "projects").is_dir())
     if os.environ.get("CLAUDE_CONFIG_DIR"):
         candidates.append(Path(os.environ["CLAUDE_CONFIG_DIR"]))
+    found: list[Any]
+    seen: set[Any]
     found, seen = [], set()
     for p in candidates:
         if not p.is_dir() or is_link(p) or any(is_link(a) for a in p.absolute().parents):
@@ -81,20 +87,22 @@ def claude_homes(user_home=None):
     return found
 
 
-def _orca_may_use(home):
+def _orca_may_use(home: Path) -> Any:
     # ~/.codex/accounts homes have no "orca" in their path but can be Orca-managed.
     parts = [part.casefold() for part in Path(home).parts]
     return "orca" in str(home).lower() or parts[-3:-1] == [".codex", "accounts"]
 
 
-class LiveApps(frozenset):
+class LiveApps(frozenset[str]):
+    claude_all: bool
+    claude_sessions: frozenset[str]
     """Running apps plus which Claude conversations they hold. Compares like a set of app names."""
-    def __new__(cls, apps=(), claude_all=False, claude_sessions=()):
+    def __new__(cls, apps: Iterable[str]=(), claude_all: bool=False, claude_sessions: Iterable[str]=()) -> LiveApps:
         self = super().__new__(cls, apps)
         self.claude_all, self.claude_sessions = claude_all, frozenset(claude_sessions)
         return self
 
-    def holds(self, entry):
+    def holds(self, entry: Entry) -> bool:
         if getattr(entry, "kind", "conversation") == "artifact":
             return False
         if "Orca" in self and _orca_may_use(entry.home):
@@ -106,7 +114,7 @@ class LiveApps(frozenset):
         return self.claude_all or entry.session in self.claude_sessions
 
 
-def entry_running(entry, live):
+def entry_running(entry: Entry, live: Iterable[str]) -> bool:
     if getattr(entry, "kind", "conversation") == "artifact":
         return False
     if isinstance(live, LiveApps):
@@ -116,12 +124,12 @@ def entry_running(entry, live):
             or ("Herdr" in live and entry.provider in {"Codex", "Claude", "Gemini"}))
 
 
-def lock_key(live):
+def lock_key(live: Iterable[str]) -> Any:
     """What decides the locks, for spotting a change: LiveApps equality only compares app names."""
     return (frozenset(live), getattr(live, "claude_all", None), getattr(live, "claude_sessions", None))
 
 
-def workspace_blocker(live):
+def workspace_blocker(live: set[str] | frozenset[str]) -> str:
     # Source folders stay stricter than records: an idle terminal can still be sitting in one.
     if live & {"Orca", "Herdr"}:
         return "Orca 또는 Herdr가 실행 중이어서 작업 폴더를 보존함"
@@ -130,13 +138,13 @@ def workspace_blocker(live):
     return ""
 
 
-def is_claude_desktop(row):
+def is_claude_desktop(row: dict[str,Any]) -> bool:
     """The desktop shell, not the Claude Code sessions it hosts (those are separate binaries)."""
     path = str(row.get("path") or "").replace("/", "\\").casefold()
     return ("\\windowsapps\\claude_" in path or "\\anthropicclaude\\" in path) and "claude-code" not in path
 
 
-def claude_session(pid):
+def claude_session(pid: int) -> dict[str,Any] | None:
     """Find this PID across Claude homes; unknown or conflicting ownership fails closed."""
     try:
         from .model import is_link
@@ -167,12 +175,13 @@ def claude_session(pid):
         return None
 
 
-def lock_state(processes):
+def lock_state(processes: Any) -> LiveApps:
     """Fail closed: one Claude CLI we cannot tie to a conversation locks all Claude conversations.
 
     Search every Claude home: CLAUDE_CONFIG_DIR may point at an Orca profile while
     its conversation is in ~/.claude/projects or a launcher account home.
     """
+    sessions: set[Any]
     sessions, unknown = set(), False
     for row in processes:
         if row["app"] != "Claude" or is_claude_desktop(row):
@@ -219,7 +228,9 @@ class _ThreadEntry(ctypes.Structure):
 
 class _WindowsJob:
     """Own only this invocation's suspended child and its descendants."""
-    def __init__(self):
+    handle: Any
+    kernel: Any
+    def __init__(self) -> None:
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         pointer, uint = ctypes.c_void_p, ctypes.c_uint32
         signatures = {
@@ -248,7 +259,7 @@ class _WindowsJob:
             self.close()
             raise error
 
-    def assign_and_resume(self, process):
+    def assign_and_resume(self, process: Any) -> None:
         # CPython 3.11 retains the native process handle; assignment precedes any CLI code.
         if not self.kernel.AssignProcessToJobObject(self.handle, int(process._handle)):
             raise ctypes.WinError(ctypes.get_last_error())
@@ -274,24 +285,24 @@ class _WindowsJob:
                 self.kernel.CloseHandle(thread)
             self.kernel.CloseHandle(snapshot)
 
-    def active(self):
+    def active(self) -> Any:
         info = _JobAccounting()
         if not self.kernel.QueryInformationJobObject(self.handle, 1, ctypes.byref(info), ctypes.sizeof(info), None):
             raise ctypes.WinError(ctypes.get_last_error())
         return info.active
 
-    def terminate(self):
+    def terminate(self) -> None:
         if not self.kernel.TerminateJobObject(self.handle, 1):
             raise ctypes.WinError(ctypes.get_last_error())
 
-    def close(self):
+    def close(self) -> None:
         if self.handle:
             self.kernel.CloseHandle(self.handle)
             self.handle = None
 
 
-def _run_process(args, *, timeout, env=None, encoding="utf-8", errors="replace",
-                 creationflags=FLAGS, capture_output=True, shell=False):
+def _run_process(args: Sequence[str | Path], *, timeout: float, env: Any=None, encoding: str="utf-8", errors: str="replace",
+                 creationflags: Any=FLAGS, capture_output: bool=True, shell: bool=False) -> subprocess.CompletedProcess[str]:
     """Bound the entire Windows process tree, including inherited output handles."""
     if os.name != "nt":
         return subprocess.run(args, timeout=timeout, env=env, encoding=encoding, errors=errors,
@@ -349,7 +360,7 @@ def _run_process(args, *, timeout, env=None, encoding="utf-8", errors="replace",
         job.close()
 
 
-def cli_version(path, timeout=2):
+def cli_version(path: str | Path, timeout: float=2) -> tuple[int,...]:
     try:
         result = _run_process([path, "--version"], capture_output=True, encoding="utf-8", errors="replace",
                                 timeout=timeout, creationflags=FLAGS, shell=False)
@@ -362,8 +373,9 @@ def cli_version(path, timeout=2):
 
 
 @functools.lru_cache(maxsize=32)
-def _codex_candidates(candidates):
+def _codex_candidates(candidates: Any) -> Any:
     deadline = time.monotonic() + 8
+    found: list[Any]
     found = []
     for path, _mtime, _size in candidates:
         remaining = deadline - time.monotonic()
@@ -380,9 +392,11 @@ def _codex_candidates(candidates):
     return path, ".".join(map(str, version))
 
 
-def codex_cli(path_value=None):
+def codex_cli(path_value: Any=None) -> Any:
     # Serialize cache misses too: lru_cache alone launches duplicate probes.
     with _discovery_lock:
+        candidates: list[Any]
+        seen: set[Any]
         candidates, seen = [], set()
         names = ("codex.exe", "codex.cmd") if os.name == "nt" else ("codex",)
         for folder in (os.environ.get("PATH", "") if path_value is None else path_value).split(os.pathsep):
@@ -401,10 +415,10 @@ def codex_cli(path_value=None):
         return _codex_candidates(tuple(candidates))
 
 
-codex_cli.cache_clear = _codex_candidates.cache_clear
+codex_cli.cache_clear = _codex_candidates.cache_clear  # type: ignore[attr-defined]  # intentional callable cache API
 
 
-def command(exe, args, env=None, timeout=30, before_run=None):
+def command(exe: Any, args: Any, env: Any=None, timeout: float=30, before_run: Any=None) -> str:
     if exe == "codex":
         path = codex_cli(None if env is None else env.get("PATH", ""))[0]
     else:
@@ -421,7 +435,7 @@ def command(exe, args, env=None, timeout=30, before_run=None):
     return result.stdout
 
 
-def _process_app(name, cmdline=""):
+def _process_app(name: str, cmdline: str="") -> str | None:
     name = name.casefold()
     if name == "codex.exe":
         return "Codex"
@@ -439,7 +453,8 @@ def _process_app(name, cmdline=""):
     return None
 
 
-def _native_processes():
+def _native_processes() -> list[dict[str,Any]]:
+    found: list[Any]
     found = []
     for pid in psutil.pids():
         try:
@@ -463,7 +478,7 @@ def _native_processes():
     return found
 
 
-def running_processes():
+def running_processes() -> list[dict[str,Any]]:
     """Always fresh, including each destructive-operation safety check."""
     if os.name != "nt":
         raise RuntimeError("이 버전의 실행 상태 확인·삭제는 Windows 전용임")
@@ -502,11 +517,11 @@ def running_processes():
     return rows
 
 
-def active_providers():
+def active_providers() -> LiveApps:
     return lock_state(running_processes())
 
 
-def orca_projects():
+def orca_projects() -> Any:
     global _orca_cache
     exe = os.environ.get("ORCA_CLI_COMMAND") or ("orca-dev" if os.environ.get("ORCA_DEV_REPO_ROOT") else "orca")
     cache_key = (exe, os.environ.get("PATH", ""))

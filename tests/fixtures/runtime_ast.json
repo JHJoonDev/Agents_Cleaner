@@ -1,0 +1,21 @@
+{
+  "scripts/main.py": "44fc3b35abcc724d99086052b2bfdb36bc8c19ce8d9a1b9b7d0848aea6006496",
+  "scripts/manager/app_control.py": "2e1eb6e63965649c30dca417a89778e81c89278702307eea4ba7138784329ef8",
+  "scripts/manager/artifacts.py": "331c91a9fc923cebe7f0eca16a8da6ea0b627c27831bc8e93b9e341bd208080e",
+  "scripts/manager/herdr.py": "06845f71211c9421961f399f88cbfcc89a956483d967ac2f690ff2bdeede37ab",
+  "scripts/manager/model.py": "3e79e639077c23a15c99c361352383bcb970129521cb669ce69043804dd0c671",
+  "scripts/manager/operations.py": "70f0ecb97e3bffd9cf1c3db80f3e990b757043ff5f8cb8889db0002bfbcda11a",
+  "scripts/manager/project_sizes.py": "c01e7068cfb27f7cea781c2089d4e93905f89e67b7720397d2e8d933bcee35da",
+  "scripts/manager/providers.py": "616b05b0abb74eeb66fa301c6368e13ca6e139596c2d1f91ea35f948b42e0a29",
+  "scripts/manager/qt_dialogs.py": "a63fd513407be82d8d7d8ccd8c9b6fc0447d290808cb06508f03a85d8dc873ce",
+  "scripts/manager/qt_logic.py": "b9ea86cd3bc68f61c5a9fc6f86ba52ad93ca8c1c9d16effc14ed03e0cd7b187a",
+  "scripts/manager/qt_models.py": "fc5d33b6f3453c83a5cb32028728cbe7c318b924ffd983e6a9d97639290439ba",
+  "scripts/manager/qt_sizes.py": "19d93be74f90f88d4c3fbb1f6b23ef85dc9481e3196d66b476b8616e4562d3ad",
+  "scripts/manager/qt_style.py": "393710f21f4037b7ae04a30c23699057ffdc6de02320985f02d8f5a23e72705a",
+  "scripts/manager/qt_ui.py": "1e8a384a3890505f6906f790068feef81c2bf638b40cc5c1ede929152f623729",
+  "scripts/manager/recycle.py": "743176ec8a101a544e73a273fc186d762d412efe3cbdc5a45de8e3190ee9a6d3",
+  "scripts/manager/runtime.py": "2d016d71c8b2039aa14c522f42a12927119f681feeee5ea35c816b08521f0ec2",
+  "scripts/manager/ui.py": "65c83b1fadf771a6deef7386398ce1a450e3cb407fdcd49277979e4e6405e794",
+  "scripts/manager/workspaces.py": "5fa2b86d541c5d666a2a45d401cc365bbcf95eab1d7f58c73987c2494809dd04",
+  "scripts/manager/__init__.py": "b1fde95de494b515f14524ca52d204029fa347982f0abc19f886b8e357261f05"
+}

@@ -1,4 +1,6 @@
 """Windows 8+ IFileOperation, with explicit recycle-on-delete semantics."""
+from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 import ctypes
 import os
 import uuid
@@ -12,11 +14,11 @@ class GUID(ctypes.Structure):
                 ("data3", ctypes.c_uint16), ("data4", ctypes.c_ubyte * 8)]
 
     @classmethod
-    def parse(cls, value):
+    def parse(cls, value: Any) -> Any:
         return cls.from_buffer_copy(uuid.UUID(value).bytes_le)
 
 
-def recycle(path: Path):
+def recycle(path: Path) -> None:
     if os.name != "nt":
         raise RuntimeError("휴지통 이동은 Windows에서만 지원")
     path = Path(path)
@@ -45,11 +47,11 @@ def recycle(path: Path):
     shell.SHCreateItemFromParsingName.argtypes = [ctypes.c_wchar_p, pointer, ctypes.POINTER(GUID), ctypes.POINTER(pointer)]
     shell.SHCreateItemFromParsingName.restype = hresult
 
-    def check(status):
+    def check(status: Any) -> None:
         if status < 0:
             raise OSError(f"Windows 휴지통 처리 실패: HRESULT 0x{status & 0xffffffff:08X}")
 
-    def method(obj, index, argtypes, *args):
+    def method(obj: Any, index: int, argtypes: Any, *args: Any) -> Any:
         table = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(pointer))).contents
         function = ctypes.WINFUNCTYPE(hresult, pointer, *argtypes)(table[index])
         result = function(obj, *args)

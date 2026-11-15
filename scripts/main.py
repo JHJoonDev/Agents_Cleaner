@@ -1,11 +1,13 @@
 """Python 3.11+. Prefer PySide6; keep Tkinter as an optional fallback."""
+from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 import argparse
 import json
 import sys
 from collections import Counter
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="AI 프로젝트·대화 체크리스트 정리 (원본 작업 폴더 보존)")
     parser.add_argument("--inventory", action="store_true", help="읽기 전용 통계만 출력. 제목·내용은 출력하지 않음")
     parser.add_argument("--artifacts", action="store_true", help="읽기 전용 작업 산출물 목록을 JSON으로 출력")
@@ -48,7 +50,7 @@ def main():
     run_gui(allow_delete=not args.read_only)
 
 
-def run_gui(allow_delete=True):
+def run_gui(allow_delete: bool=True) -> None:
     if sys.platform == "win32":
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AgentsCleaner.App")
@@ -56,8 +58,8 @@ def run_gui(allow_delete=True):
         from PySide6.QtWidgets import QApplication
     except ImportError:
         print("PySide6가 없어 기존 Tkinter 화면으로 실행합니다.")
-        from manager.ui import App
-        App(allow_delete=allow_delete).mainloop()
+        from manager.ui import App as TkApp
+        TkApp(allow_delete=allow_delete).mainloop()
         return
     from manager.qt_ui import App
     if sys.platform == "win32":

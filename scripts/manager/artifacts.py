@@ -1,5 +1,6 @@
 """Read-only discovery and conservative validation of disposable work artifacts."""
 from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 
 import hashlib
 import os
@@ -32,21 +33,21 @@ LIVE_UNKNOWN = "Herdr 실행 상태를 확인하지 못해 보존"
 _ERRORS = (OSError, ValueError, RuntimeError, subprocess.SubprocessError)
 
 
-def temp_root():
+def temp_root() -> Any:
     return Path(os.environ.get("TEMP") or tempfile.gettempdir()).absolute()
 
 
-def backup_root():
+def backup_root() -> Any:
     return Path(os.environ.get("USERPROFILE") or Path.home()) / ".config/herdr-app/data"
 
 
-def live_cwds():
+def live_cwds() -> Any:
     # Kept as a wrapper so callers/tests can inject live state without importing UI code.
     detector = getattr(herdr, "live_cwds", None)
     return detector() if detector is not None else None
 
 
-def _children(path):
+def _children(path: Path) -> Any:
     if not path.exists():
         return []
     if is_link(path):
@@ -55,7 +56,7 @@ def _children(path):
         return [(Path(c.path), c.stat(follow_symlinks=False)) for c in stream]
 
 
-def _nodes(path, recursive=False):
+def _nodes(path: Path, recursive: bool=False) -> Iterator[Any]:
     """Fresh metadata, refusing links (including links below a target)."""
     pending = [path]
     while pending:
@@ -70,7 +71,8 @@ def _nodes(path, recursive=False):
             pending.extend(p for p, _ in _children(item))
 
 
-def _snapshot(path, recursive=False):
+def _snapshot(path: Path, recursive: bool=False) -> Any:
+    rows: list[Any]
     rows, newest = [], 0
     for p, s in _nodes(path, recursive):
         newest = max(newest, s.st_mtime)
@@ -79,15 +81,15 @@ def _snapshot(path, recursive=False):
     return newest, digest
 
 
-def _within(path, root):
+def _within(path: Path, root: Path) -> Any:
     return path.resolve() == root.resolve() or inside(path, root)
 
 
-def _rootlike(path):
+def _rootlike(path: Path) -> Any:
     return herdr.is_root_like(path)
 
 
-def live_problem(entry, live):
+def live_problem(entry: Entry, live: Sequence[Path] | None) -> Any:
     if live is None or not isinstance(live, (list, tuple)):
         return LIVE_UNKNOWN
     target = entry.files[0]
@@ -105,7 +107,7 @@ def live_problem(entry, live):
     return ""
 
 
-def process_owners(apps):
+def process_owners(apps: Iterable[str]) -> Any:
     """Resolve cwd ownership for standalone CLIs, which need not belong to Herdr."""
     if not set(apps).intersection({"Claude", "Codex"}):
         return []
@@ -113,6 +115,7 @@ def process_owners(apps):
     if runtime.psutil is None:
         return None
     try:
+        owners: list[Any]
         owners = []
         for row in runtime.running_processes():
             if row["app"] not in {"Claude", "Codex"} or (row["app"] == "Claude" and runtime.is_claude_desktop(row)):
@@ -126,7 +129,7 @@ def process_owners(apps):
         return None
 
 
-def process_problem(entry, apps, owners=()):
+def process_problem(entry: Entry, apps: Iterable[str], owners: Any=()) -> Any:
     """Use session detail when available; unknown Claude/Codex ownership fails closed."""
     category = entry.extra["category"]
     if category == "temp-claude" and "Claude" in apps:
@@ -142,7 +145,7 @@ def process_problem(entry, apps, owners=()):
     return ""
 
 
-def _category(path):
+def _category(path: Path) -> Any:
     name = path.name
     if name == "node_modules":
         return "deps-node"
@@ -157,7 +160,7 @@ def _category(path):
     return ""
 
 
-def _git_problem(path, project):
+def _git_problem(path: Path, project: Path) -> Any:
     # Detect parent repositories too, including linked worktrees (.git is a file).
     if not any((p / ".git").exists() for p in (project, *project.parents)):
         return ""
@@ -169,15 +172,15 @@ def _git_problem(path, project):
     return "tracked" if result.stdout else ""
 
 
-def _backup_children(folder):
+def _backup_children(folder: Path) -> Any:
     return [p for p, s in _children(folder) if stat.S_ISDIR(s.st_mode) and not _link_stat(s)]
 
 
-def _kept_backups(folder):
+def _kept_backups(folder: Path) -> Any:
     return sorted(_backup_children(folder), key=lambda p: (p.stat().st_mtime, p.name), reverse=True)[:KEEP_BACKUPS]
 
 
-def validate_shape(entry):
+def validate_shape(entry: Entry) -> None:
     """Independent whitelist, never trust Entry.extra to choose a deletion root or method."""
     if entry.kind != "artifact" or entry.provider != "Artifacts" or len(entry.files) != 1:
         raise ValueError("지원하지 않는 작업 산출물")
@@ -219,7 +222,7 @@ def validate_shape(entry):
             raise ValueError("원본 프로젝트를 포함하는 산출물은 보존")
 
 
-def revalidate(entry, live=None, now=None, apps=()):
+def revalidate(entry: Entry, live: Sequence[Path] | None=None, now: float | None=None, apps: Iterable[str]=()) -> None:
     """Expensive full traversal belongs at mutation time, not at initial inventory."""
     validate_shape(entry)
     if entry.blocked:
@@ -254,7 +257,9 @@ def revalidate(entry, live=None, now=None, apps=()):
         raise ValueError("최근 백업 3개 보존")
 
 
-def _project_targets(project):
+def _project_targets(project: Path) -> Any:
+    errors: list[Any]
+    found: list[Any]
     pending, found, errors = [(project, 0)], [], []
     newest = project.stat().st_mtime
     while pending:
@@ -275,14 +280,17 @@ def _project_targets(project):
     return newest, found, errors
 
 
-def scan_artifacts(entries, errors, live=None, now=None):
+def scan_artifacts(entries: Sequence[Entry], errors: list[str], live: Sequence[Path] | None=None, now: float | None=None) -> Any:
     from .runtime import active_providers
     from .workspaces import ai_homes, fixed_problem
     now = time.time() if now is None else now
     live = live_cwds() if live is None else live
+    result: list[Any]
     result = []
     source = [e for e in entries if e.kind == "conversation" or e.provider == "Herdr"]
     homes = ai_homes(e for e in entries if e.kind != "artifact")
+    project_times: dict[Any,Any]
+    projects: list[Any]
     projects, project_times = [], {}
     for value in [e.project for e in source] + list(live or ()):
         path = Path(value)
@@ -296,6 +304,7 @@ def scan_artifacts(entries, errors, live=None, now=None):
     for e in source:
         if Path(e.project).is_absolute():
             project_times[Path(e.project).resolve()] = max(project_times.get(Path(e.project).resolve(), 0), e.updated)
+    roots: list[Any]
     roots = []
     for project in sorted(projects, key=lambda p: len(p.parts)):
         if not any(_within(project, root) for root in roots):
@@ -306,7 +315,7 @@ def scan_artifacts(entries, errors, live=None, now=None):
     except Exception:
         apps, owners = None, None
 
-    def add(path, home, category, project="(공용 작업 산출물)", project_updated=0, blocked=""):
+    def add(path: Path, home: Path, category: Any, project: str="(공용 작업 산출물)", project_updated: int=0, blocked: str="") -> None:
         tier, method, hint = CATEGORIES[category]
         try:
             safe_path(path, home)

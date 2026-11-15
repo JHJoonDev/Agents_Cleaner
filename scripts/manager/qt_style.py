@@ -1,4 +1,6 @@
 """B2 palette and local vector icons; no web or image dependencies."""
+from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 from functools import lru_cache
 import os
 from pathlib import Path
@@ -66,7 +68,7 @@ QToolTip { background:#33383e; border:1px solid #717985; color:#d6d8dc; padding:
 
 
 @lru_cache(maxsize=1)
-def load_offscreen_fonts():
+def load_offscreen_fonts() -> None:
     # The Windows offscreen plugin has an empty font database. Use installed OS fonts,
     # without downloading, bundling, or copying licensed font files.
     root = Path(os.environ.get("SystemRoot", "C:/Windows")) / "Fonts"
@@ -78,7 +80,7 @@ def load_offscreen_fonts():
 
 class CheckStyle(QProxyStyle):
     """Keep unchecked boxes visible on the dark palette, without image assets."""
-    def drawPrimitive(self, element, option, painter, widget=None):
+    def drawPrimitive(self, element: Any, option: Any, painter: Any, widget: Any=None) -> Any:
         if element not in (QStyle.PrimitiveElement.PE_IndicatorCheckBox,
                             QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck):
             return super().drawPrimitive(element, option, painter, widget)
@@ -100,7 +102,7 @@ class CheckStyle(QProxyStyle):
         painter.restore()
 
 
-def configure(app: QApplication):
+def configure(app: QApplication) -> None:
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().parents[2] / "app.ico")))
     if app.platformName() == "offscreen" and os.name == "nt":
         load_offscreen_fonts()
@@ -121,7 +123,7 @@ def configure(app: QApplication):
 
 
 @lru_cache(maxsize=32)
-def icon(name, color="#adb6c2"):
+def icon(name: Any, color: str="#adb6c2") -> Any:
     source = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">{PATHS[name]}</svg>'
     pixmap = QPixmap(20, 20)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -132,7 +134,7 @@ def icon(name, color="#adb6c2"):
 
 
 @lru_cache(maxsize=1)
-def app_icon():
+def app_icon() -> Any:
     renderer = QSvgRenderer(str(Path(__file__).resolve().parents[2] / "assets" / "app.svg"))
     result = QIcon()
     for size in (16, 20, 24, 32, 48, 64, 128, 256):
@@ -146,7 +148,7 @@ def app_icon():
     return result
 
 
-def label(text="", muted=False, wrap=False):
+def label(text: str="", muted: bool=False, wrap: bool=False) -> Any:
     widget = QLabel(text)
     widget.setTextFormat(Qt.TextFormat.PlainText)
     widget.setWordWrap(wrap)
@@ -155,7 +157,7 @@ def label(text="", muted=False, wrap=False):
     return widget
 
 
-def message(parent, title, text, critical=False):
+def message(parent: Any, title: Any, text: Any, critical: bool=False) -> None:
     box = QMessageBox(parent)
     box.setWindowTitle(title)
     box.setTextFormat(Qt.TextFormat.PlainText)
@@ -164,7 +166,7 @@ def message(parent, title, text, critical=False):
     box.exec()
 
 
-def ask(parent, title, text, confirm):
+def ask(parent: Any, title: Any, text: Any, confirm: Any) -> Any:
     """Yes/no with cancel as the default, so a stray Enter never confirms."""
     box = QMessageBox(parent)
     box.setWindowTitle(title)

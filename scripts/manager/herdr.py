@@ -1,5 +1,6 @@
 """Herdr core inventory. Persistent terminal state is intentionally read-only."""
 from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 
 import os
 import re
@@ -11,7 +12,7 @@ from pathlib import Path
 from .model import Entry, read_json
 
 
-def is_root_like(path):
+def is_root_like(path: Path) -> bool:
     """Drive roots and user-home ancestors must not match entire project trees."""
     from .providers import clean_path
     target = Path(clean_path(path)).resolve()
@@ -19,7 +20,7 @@ def is_root_like(path):
     return target == target.parent or target == home or target in home.parents
 
 
-def live_cwds():
+def live_cwds() -> list[Path] | None:
     """Read live local terminal folders, or None when protection cannot be established."""
     from .providers import clean_path
     try:
@@ -34,6 +35,7 @@ def live_cwds():
         rows = data.get("terminals") if isinstance(data, dict) else data
         if not isinstance(rows, list):
             return None
+        found: list[Any]
         found = []
         for row in rows:
             if not isinstance(row, dict):
@@ -55,11 +57,11 @@ def live_cwds():
         return None
 
 
-def storage_root():
+def storage_root() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "herdr-core"
 
 
-def terminals(home, errors=None):
+def terminals(home: Path, errors: list[str] | None=None) -> list[Entry]:
     from .providers import SCAN_ERRORS, _error, _plain_stat, clean_path, stamp
 
     path = home / "terminals.json"
@@ -69,6 +71,7 @@ def terminals(home, errors=None):
     rows = data.get("terminals") if isinstance(data, dict) else None
     if not isinstance(rows, dict):
         raise ValueError("지원하지 않는 Herdr terminals 스키마")
+    result: list[Any]
     result = []
     for key, row in rows.items():
         try:
@@ -90,6 +93,6 @@ def terminals(home, errors=None):
     return result
 
 
-def protected_homes():
+def protected_homes() -> set[Path]:
     return {storage_root(), Path(os.environ.get("HERDR_APP_HOME", Path.home() / ".config/herdr-app")),
             Path.home() / ".config/herdr-core"}

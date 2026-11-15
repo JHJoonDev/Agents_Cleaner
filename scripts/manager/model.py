@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 
 import hashlib
 import json
@@ -19,24 +20,24 @@ class Entry:
     updated: float
     files: list[Path] = field(default_factory=list)
     kind: str = "conversation"
-    extra: dict = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
     blocked: str = ""
 
     @property
-    def key(self):
+    def key(self) -> str:
         return hashlib.sha256(f"{self.provider}|{self.home}|{self.kind}|{self.session}".encode()).hexdigest()
 
     @property
-    def group(self):
+    def group(self) -> tuple[str,str,str]:
         # Project paths are labels, NEVER filesystem deletion targets.
         return (self.provider, str(self.home), self.project)
 
     @property
-    def size(self):
+    def size(self) -> int:
         return sum(tree_size(p) for p in self.files)
 
 
-def is_link(path: Path):
+def is_link(path: Path) -> bool:
     try:
         # Reject Windows junctions as well as symbolic links.
         return _link_stat(path.lstat())
@@ -44,11 +45,11 @@ def is_link(path: Path):
         return True
 
 
-def _link_stat(info):
+def _link_stat(info: os.stat_result) -> bool:
     return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
 
 
-def inside(path: Path, root: Path):
+def inside(path: Path, root: Path) -> bool:
     try:
         target, base = path.resolve(), root.resolve()
         target.relative_to(base)
@@ -57,7 +58,7 @@ def inside(path: Path, root: Path):
         return False
 
 
-def safe_path(path: Path, root: Path):
+def safe_path(path: Path, root: Path) -> Path:
     if not inside(path, root):
         raise ValueError(f"앱 저장소 밖의 경로 또는 루트 자체: {path}")
     cur = path.absolute()
@@ -72,7 +73,7 @@ def safe_path(path: Path, root: Path):
     return path
 
 
-def tree_files(path: Path):
+def tree_files(path: Path) -> Iterator[Path]:
     if not path.exists() or is_link(path):
         return
     if path.is_file():
@@ -86,11 +87,11 @@ def tree_files(path: Path):
                 yield p
 
 
-def tree_size(path: Path):
+def tree_size(path: Path) -> int:
     return sum(info.st_size for _, info in _tree_stats(path))
 
 
-def _tree_stats(path: Path, strict=False):
+def _tree_stats(path: Path, strict: bool=False) -> Iterator[tuple[Path,os.stat_result]]:
     """Use scandir metadata for display, but fresh lstat for deletion signatures."""
     try:
         info = path.lstat()
@@ -139,7 +140,7 @@ def _tree_stats(path: Path, strict=False):
                 raise
 
 
-def signature(entry: Entry):
+def signature(entry: Entry) -> str:
     # A native Codex delete may also remove a rollout that was missing at scan time.
     # Require refresh when either plain/compressed candidate newly appears.
     for candidate in entry.extra.get("rollout_candidates", ()):
@@ -150,6 +151,7 @@ def signature(entry: Entry):
             continue
         if p not in entry.files or _link_stat(info) or not stat.S_ISREG(info.st_mode):
             raise ValueError("스캔 이후 대화 파일이 변경됨. 새로고침 필요")
+    rows: list[Any]
     rows = []
     for path in entry.files:
         safe_path(path, entry.home)
@@ -158,7 +160,7 @@ def signature(entry: Entry):
     return hashlib.sha256(json.dumps(sorted(rows)).encode()).hexdigest()
 
 
-def read_json(path: Path, limit=64 * 1024 * 1024):
+def read_json(path: Path, limit: int=64 * 1024 * 1024) -> Any:
     # Bound the actual read too: a writer may grow the file after the size check.
     with path.open("rb") as stream:
         size = os.fstat(stream.fileno()).st_size
@@ -173,14 +175,14 @@ def read_json(path: Path, limit=64 * 1024 * 1024):
 
 
 class ClosingConnection(sqlite3.Connection):
-    def __exit__(self, *args):
+    def __exit__(self, *args: Any) -> Any:
         try:
             return super().__exit__(*args)
         finally:
             self.close()
 
 
-def read_db(path: Path):
+def read_db(path: Path) -> ClosingConnection:
     db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2, factory=ClosingConnection)
     try:
         db.row_factory = sqlite3.Row
@@ -191,7 +193,7 @@ def read_db(path: Path):
     return db
 
 
-def readable_size(n):
+def readable_size(n: float) -> str:  # type: ignore[return]  # final TB sentinel always returns
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024 or unit == "TB":
             return f"{n:,.1f} {unit}"

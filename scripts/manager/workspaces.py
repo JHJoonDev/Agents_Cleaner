@@ -1,11 +1,12 @@
 """Work folders (conversation cwd) that the user explicitly marks for deletion together with their chats."""
 from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 
 import os
 import re
 from pathlib import Path
 
-from .model import is_link, tree_files
+from .model import Entry, is_link, tree_files
 from .providers import profile_roots
 from .herdr import protected_homes
 from .runtime import command
@@ -15,21 +16,21 @@ PERSONAL = {"desktop", "documents", "downloads", "pictures", "music", "videos", 
             "links", "saved games", "searches", "3d objects", "appdata", "바탕 화면", "문서", "다운로드", "사진", "음악", "동영상"}
 
 
-def key(path):
+def key(path: str | Path) -> str:
     return os.path.normcase(os.path.abspath(str(path)))
 
 
-def under(child, parent):
+def under(child: str | Path, parent: str | Path) -> bool:
     c, p = key(child), key(parent)
     return c == p or c.startswith(p.rstrip("\\/") + os.sep)
 
 
-def conversations_in(path, entries):
+def conversations_in(path: str | Path, entries: Iterable[Entry]) -> list[Entry]:
     """Every conversation that worked in this folder or one of its subfolders."""
     return [e for e in entries if e.kind == "conversation" and Path(e.project).is_absolute() and under(e.project, path)]
 
 
-def ai_homes(entries=()):
+def ai_homes(entries: Iterable[Entry]=()) -> set[Path]:
     roaming = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
     # Artifact homes are projects, TEMP or herdr-app data: bounding roots, not AI app storage.
     homes = {e.home for e in entries if getattr(e, "kind", "") != "artifact"} | {p for _, p in profile_roots()} | {roaming / "orca"}
@@ -37,7 +38,7 @@ def ai_homes(entries=()):
     return homes | protected_homes() | {home / ".codex", home / ".claude", home / ".gemini"}
 
 
-def fixed_problem(path, homes=()):
+def fixed_problem(path: str | Path, homes: Iterable[Path]=()) -> str:
     """Why this folder can never be deleted as a work folder, or ''."""
     p = Path(path)
     if not p.is_absolute():
@@ -75,7 +76,7 @@ def fixed_problem(path, homes=()):
     return ""
 
 
-def workspace_problem(path, entries, selected_keys, homes):
+def workspace_problem(path: str | Path, entries: Sequence[Entry], selected_keys: set[str], homes: Iterable[Path]) -> str:
     reason = fixed_problem(path, homes)
     if reason:
         return reason
@@ -86,7 +87,7 @@ def workspace_problem(path, entries, selected_keys, homes):
     return ""
 
 
-def git_warnings(path):
+def git_warnings(path: str | Path) -> list[str]:
     p = Path(path)
     if not (p / ".git").exists():
         return []
@@ -96,6 +97,7 @@ def git_warnings(path):
         return [f"git 상태 확인 실패: {str(exc)[:120]}"]
     lines = out.splitlines()
     head = lines[0] if lines and lines[0].startswith("## ") else ""
+    warnings: list[Any]
     warnings = []
     changed = [line for line in lines if not line.startswith("## ")]
     if changed:
@@ -119,12 +121,13 @@ def git_warnings(path):
     return warnings
 
 
-def plan_workspaces(paths, entries, selected_keys, orca_paths=()):
+def plan_workspaces(paths: Iterable[Path], entries: Sequence[Entry], selected_keys: set[str], orca_paths: Any=()) -> list[dict[str,Any]]:
     """Size, git state and blocking reason for each marked work folder. Read-only."""
     homes = ai_homes(entries)
+    plan: list[Any]
     plan = []
     for path in sorted(paths, key=key):
-        item = {"path": path, "size": 0, "files": 0, "warnings": [],
+        item: dict[str,Any] = {"path": path, "size": 0, "files": 0, "warnings": [],
                 "problem": workspace_problem(path, entries, selected_keys, homes)}
         if not item["problem"]:
             for f in tree_files(Path(path)):

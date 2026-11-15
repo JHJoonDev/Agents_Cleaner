@@ -1,4 +1,6 @@
 """Qt controller: the same backend calls and snapshots as the Tk fallback."""
+from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 from pathlib import Path
 from collections import defaultdict
 from time import monotonic
@@ -20,7 +22,42 @@ MONITOR_MS = 2000 if psutil is not None else 15000
 
 
 class Logic:
-    def initialize_logic(self, roots, allow_delete):
+    _closing: Any
+    allow_delete: Any
+    backup_dir: Any
+    busy: Any
+    checked: Any
+    codex: Any
+    detail_hint: Any
+    dialogs: Any
+    dirs: Any
+    elapsed_timer: Any
+    entries: Any
+    entry_by_key: Any
+    errors: Any
+    groups: Any
+    job_started: Any
+    job_status: Any
+    jobs: Any
+    monitor_failed: Any
+    monitor_task: Any
+    monitor_timer: Any
+    orca: Any
+    pending: Any
+    pool: Any
+    process_dialog: Any
+    processes: Any
+    project_groups: Any
+    protected: Any
+    render: Any
+    roots: Any
+    running: Any
+    status_text: Any
+    sync_checks: Any
+    update_actions: Any
+    update_locks: Any
+    workspaces: Any
+    def initialize_logic(self, roots: Any, allow_delete: Any) -> None:
         self.roots, self.allow_delete = roots, allow_delete
         self.entries, self.errors, self.processes, self.orca = [], [], [], []
         self.running, self.checked, self.project_groups, self.workspaces = set(), set(), set(), set()
@@ -30,20 +67,20 @@ class Logic:
         self.jobs, self.dialogs = [], []
         self.pool = QThreadPool.globalInstance()
         self.job_started, self.job_status = None, ""
-        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer = QTimer(cast(Any,self))
         self.elapsed_timer.setInterval(1000)
         self.elapsed_timer.timeout.connect(self.update_busy_status)
         self.process_dialog, self.monitor_task, self.monitor_failed = None, None, False
-        self.monitor_timer = QTimer(self)
+        self.monitor_timer = QTimer(cast(Any,self))
         self.monitor_timer.setInterval(MONITOR_MS)
         self.monitor_timer.timeout.connect(self.poll_processes)
 
-    def update_busy_status(self):
+    def update_busy_status(self) -> None:
         if self.busy and self.job_started is not None:
             seconds = max(0, int(monotonic() - self.job_started))
             self.status_text.setText(f"{self.job_status} ({seconds}초 경과)")
 
-    def launch(self, function, event):
+    def launch(self, function: Any, event: Any) -> Any:
         if self.busy or self._closing:
             return False
         self.busy = True
@@ -60,11 +97,12 @@ class Logic:
             return False
         return True
 
-    def refresh(self):
+    def refresh(self) -> None:
         if self.busy or self._closing:
             return
         self.status_text.setText("앱별 프로젝트·대화기록을 읽는 중…")
-        def work():
+        def work() -> Any:
+            running: set[str] | frozenset[str]
             entries, errors = scan(self.roots)
             for e in entries:
                 e.extra["display_size"] = e.size
@@ -74,6 +112,7 @@ class Logic:
             except Exception as exc:
                 errors.append(str(exc))
                 processes, running = [], set(PROVIDERS)
+            projects: list[Any]
             projects = []
             if self.roots is None:
                 try:
@@ -85,7 +124,10 @@ class Logic:
                 codex = f"{version} ({path})"
             except Exception as exc:
                 codex = f"찾지 못함: {exc}"
+            dirs: dict[Any,Any]
+            protected: dict[Any,Any]
             dirs, protected, homes = {}, {}, ai_homes(entries)
+            seen: set[Any]
             seen = set()
             for e in entries:
                 if e.kind != "conversation" or not Path(e.project).is_absolute():
@@ -103,7 +145,7 @@ class Logic:
         self.launch(work, "scan")
 
     @Slot(str, object, object)
-    def finished(self, event, result, error):
+    def finished(self, event: Any, result: Any, error: Any) -> None:
         self.elapsed_timer.stop()
         self.job_started = None
         self.jobs.clear()
@@ -121,7 +163,7 @@ class Logic:
         elif event in {"stop", "force"}:
             self.after_stop(event, result, error)
 
-    def apply_result(self, event, result, error):
+    def apply_result(self, event: Any, result: Any, error: Any) -> None:
         if error:
             if event == "scan":
                 self.errors.append(error)
@@ -154,7 +196,7 @@ class Logic:
             finally:
                 dialog.deleteLater()
 
-    def update_status(self):
+    def update_status(self) -> None:
         live = ", ".join(sorted(self.running)) or "없음"
         text = f"기록 {len(self.entries):,}개 · 조회 오류 {len(self.errors)}개 · 실행 중: {live}"
         locked = sum(self.is_running(e) for e in self.entries)
@@ -164,10 +206,10 @@ class Logic:
             text += " · 실행 상태 확인 실패로 모두 잠금"
         self.status_text.setText(text)
 
-    def poll_processes(self):
+    def poll_processes(self) -> None:
         if self.busy or self._closing or self.monitor_task is not None:
             return
-        def work():
+        def work() -> Any:
             processes = running_processes()
             return lock_state(processes), processes
         task = Task(work, "monitor")
@@ -179,7 +221,7 @@ class Logic:
             self.monitor_done("monitor", None, str(exc) or type(exc).__name__)
 
     @Slot(str, object, object)
-    def monitor_done(self, _event, result, error):
+    def monitor_done(self, _event: Any, result: Any, error: Any) -> None:
         self.monitor_task = None
         # A scan or delete in progress has fresher facts, or will check for itself.
         if self.busy or self._closing:
@@ -187,7 +229,7 @@ class Logic:
         running, processes = (set(PROVIDERS), []) if error else result
         self.apply_processes(running, processes, bool(error))
 
-    def apply_processes(self, running, processes, failed=False):
+    def apply_processes(self, running: Any, processes: Any, failed: bool=False) -> None:
         """Follow the apps without rescanning, so the list and the current selection survive."""
         locks_changed = lock_key(running) != lock_key(self.running) or failed != self.monitor_failed
         apps_changed = {p["pid"] for p in processes} != {p["pid"] for p in self.processes}
@@ -201,7 +243,7 @@ class Logic:
         if apps_changed or locks_changed:
             self.update_process_dialog()
 
-    def prune_selection(self):
+    def prune_selection(self) -> Any:
         before = len(self.checked)
         self.checked = {k for k in self.checked if k in self.entry_by_key and self.can_select(self.entry_by_key[k])}
         self.project_groups = {g for g in self.project_groups if any(e.key in self.checked for e in self.groups.get(g, []))}
@@ -212,23 +254,23 @@ class Logic:
                                if all(e.key in self.checked for e in conversations_in(self.dirs[k], self.entries))}
         return before - len(self.checked)
 
-    def update_process_dialog(self):
+    def update_process_dialog(self) -> None:
         if self.process_dialog is not None:
             self.process_dialog.set_groups(app_control.snapshot(self.processes), self.running)
 
-    def is_running(self, e):
+    def is_running(self, e: Any) -> Any:
         return entry_running(e, self.running)
 
-    def can_select(self, e):
+    def can_select(self, e: Any) -> Any:
         return not e.blocked and not self.is_running(e)
 
-    def workspace_of(self, group, members):
+    def workspace_of(self, group: Any, members: Any) -> Any:
         if all(e.kind in {"cache", "artifact"} for e in members):
             return None
         k = path_key(group[2]) if Path(group[2]).is_absolute() else None
         return k if k in self.dirs else None
 
-    def set_records_checked(self, members, state, group=None):
+    def set_records_checked(self, members: Any, state: Any, group: Any=None) -> None:
         if self.busy:
             self.sync_checks()
             return
@@ -252,7 +294,7 @@ class Logic:
                 self.workspaces.discard(k)
         self.sync_checks()
 
-    def toggle_workspace(self, group, desired=None):
+    def toggle_workspace(self, group: Any, desired: Any=None) -> None:
         if self.busy:
             self.sync_checks()
             return
@@ -289,25 +331,25 @@ class Logic:
             self.detail_hint.setText(f"작업 폴더를 함께 삭제합니다: {path}\n하위 폴더 포함 대화 {len(members)}개를 앱 구분 없이 선택했습니다." + (f" 선택 불가 {locked}개가 있어 검토 단계에서 폴더가 제외됩니다." if locked else ""))
         self.sync_checks()
 
-    def select_all(self):
+    def select_all(self) -> None:
         # Select records only; deleting source folders remains an explicit choice.
         self.set_records_checked(self.entries, True)
 
-    def clear(self):
+    def clear(self) -> None:
         if not self.busy:
             self.checked.clear()
             self.project_groups.clear()
             self.workspaces.clear()
             self.sync_checks()
 
-    def show_dialog(self, dialog):
+    def show_dialog(self, dialog: Any) -> Any:
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.dialogs.append(dialog)
         dialog.finished.connect(lambda _: self.dialogs.remove(dialog) if dialog in self.dialogs else None)
         dialog.open()
         return dialog
 
-    def show_processes(self):
+    def show_processes(self) -> Any:
         if self.busy:
             return None
         stop = self.stop_apps if self.allow_delete else None
@@ -316,7 +358,7 @@ class Logic:
         dialog.finished.connect(lambda _: setattr(self, "process_dialog", None))
         return self.show_dialog(dialog)
 
-    def stop_apps(self, groups):
+    def stop_apps(self, groups: Any) -> None:
         groups = [g for g in groups if g.stoppable]
         if self.busy or not self.allow_delete or not groups:
             return
@@ -325,7 +367,7 @@ class Logic:
         self.status_text.setText("앱에 종료를 요청하는 중…")
         self.launch(lambda: app_control.request_close(groups), "stop")
 
-    def after_stop(self, event, result, error):
+    def after_stop(self, event: Any, result: Any, error: Any) -> None:
         """Runs once the task is finished, so the next step can start its own."""
         left, notes = result if not error else ([], [])
         if event == "stop" and left:
@@ -341,14 +383,14 @@ class Logic:
         # Closing apps can write out last-minute changes, so read the records again.
         self.refresh()
 
-    def manage_backups(self):
+    def manage_backups(self) -> Any:
         if not self.busy:
             return self.show_dialog(BackupDialog(self.backup_dir, self.allow_delete, self.set_backup_dir, self))
 
-    def set_backup_dir(self, path):
+    def set_backup_dir(self, path: Any) -> None:
         self.backup_dir = Path(path)
 
-    def review(self):
+    def review(self) -> Any:
         if self.busy or not self.allow_delete:
             return
         if self.errors and (self.workspaces or self.project_groups):
@@ -366,13 +408,13 @@ class Logic:
         self.status_text.setText("작업 폴더 용량과 git 상태를 확인하는 중…")
         self.launch(lambda: plan_workspaces(paths, entries, keys, orca), "plan")
 
-    def open_review(self, selected, plan):
+    def open_review(self, selected: Any, plan: Any) -> Any:
         dialog = ReviewDialog(selected, plan, self.backup_dir, self.codex, self.allow_delete, self)
         groups, everything = set(self.project_groups), list(self.entries)
         dialog.requested.connect(lambda payload: self.submit_review(list(selected), groups, everything, payload))
         return self.show_dialog(dialog)
 
-    def submit_review(self, selected, groups, everything, payload):
+    def submit_review(self, selected: Any, groups: Any, everything: Any, payload: Any) -> None:
         if self.busy or not self.allow_delete:
             return
         if self.errors and (groups or payload.get("workspaces")):
@@ -382,7 +424,7 @@ class Logic:
             message(self, "삭제 차단", "실행 중이거나 차단된 항목이 있습니다. 새로고침 후 확인하세요.")
             return
         self.status_text.setText("선택한 기록을 정리하는 중…")
-        def work():
+        def work() -> Any:
             expected = {e.key: signature(e) for e in selected}
             return operations.delete(selected, expected, project_groups=groups,
                                      workspaces=payload["workspaces"], all_entries=everything)

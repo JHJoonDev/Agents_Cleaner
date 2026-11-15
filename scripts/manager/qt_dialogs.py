@@ -1,4 +1,6 @@
 """B2 dialogs. All mutations go through the existing operations API."""
+from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 from pathlib import Path
 import os
 import textwrap
@@ -16,14 +18,14 @@ from .qt_models import Task, display_date
 from .qt_style import icon, label, message
 
 
-def button(text, callback, layout):
+def button(text: Any, callback: Any, layout: Any) -> Any:
     widget = QPushButton(text)
     widget.clicked.connect(callback)
     layout.addWidget(widget)
     return widget
 
 
-def table(headers, parent=None):
+def table(headers: Any, parent: Any=None) -> Any:
     widget = QTreeWidget(parent)
     widget.setHeaderLabels(headers)
     widget.setRootIsDecorated(False)
@@ -37,17 +39,21 @@ def table(headers, parent=None):
 
 class AsyncDialog(QDialog):
     """One reader at a time, keeping only the latest requested folder."""
-    def __init__(self, parent=None):
+    _closed: Any
+    _next_read: Any
+    _read_id: Any
+    _reads: Any
+    def __init__(self, parent: Any=None) -> None:
         super().__init__(parent)
         self._reads, self._next_read, self._read_id = {}, None, 0
         self._closed = False
         self.finished.connect(self._read_closed)
 
-    def _read_closed(self, _):
+    def _read_closed(self, _: Any) -> None:
         self._closed = True
         self._next_read = None
 
-    def _start_read(self, function, callback):
+    def _start_read(self, function: Any, callback: Any) -> None:
         if self._closed:
             return
         if self._reads:
@@ -64,7 +70,7 @@ class AsyncDialog(QDialog):
             self._read_done(event, None, str(exc) or type(exc).__name__)
 
     @Slot(str, object, object)
-    def _read_done(self, event, result, error):
+    def _read_done(self, event: Any, result: Any, error: Any) -> None:
         job = self._reads.pop(event, None)
         if job is None or self._closed:
             return
@@ -77,9 +83,20 @@ class AsyncDialog(QDialog):
 
 
 class ReviewDialog(AsyncDialog):
+    _submitted: Any
+    agreed: Any
+    allow_delete: Any
+    cancel_button: Any
+    confirm_button: Any
+    eligible: Any
+    method_summary: Any
+    moved: Any
+    plan: Any
+    selected: Any
+    targets: Any
     requested = Signal(object)
 
-    def __init__(self, selected, plan, destination, codex="", allow_delete=True, parent=None):
+    def __init__(self, selected: Any, plan: Any, destination: Any, codex: str="", allow_delete: bool=True, parent: Any=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("삭제 대상 최종 확인")
         self.setWindowModality(Qt.WindowModality.WindowModal)
@@ -114,6 +131,7 @@ class ReviewDialog(AsyncDialog):
                     folder_layout.addWidget(note)
                 else:
                     for warning in item["warnings"]:
+                        row: Any
                         row = QHBoxLayout()
                         symbol = label()
                         symbol.setPixmap(icon("warning", "#d6b779").pixmap(14, 14))
@@ -163,11 +181,11 @@ class ReviewDialog(AsyncDialog):
         self.moved.toggled.connect(self.update_enabled)
         self.update_enabled()
 
-    def update_enabled(self, *_):
+    def update_enabled(self, *_: Any) -> None:
         valid = not self._submitted and self.allow_delete and bool(self.selected)
         self.confirm_button.setEnabled(valid and self.agreed.isChecked() and (not self.eligible or self.moved.isChecked()))
 
-    def confirm(self):
+    def confirm(self) -> None:
         if self._closed or self._submitted:
             return
         self.update_enabled()
@@ -180,7 +198,16 @@ class ReviewDialog(AsyncDialog):
 
 
 class BackupDialog(AsyncDialog):
-    def __init__(self, destination, allow_delete=True, changed=None, parent=None):
+    _loading: Any
+    _removing: Any
+    allow_delete: Any
+    changed: Any
+    folder: Any
+    location: Any
+    remove_button: Any
+    summary: Any
+    tree: Any
+    def __init__(self, destination: Any, allow_delete: bool=True, changed: Any=None, parent: Any=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("백업 관리")
         self.setWindowModality(Qt.WindowModality.WindowModal)
@@ -210,7 +237,7 @@ class BackupDialog(AsyncDialog):
         outer.addLayout(row)
         self.load()
 
-    def load(self):
+    def load(self) -> None:
         self._loading = True
         self.remove_button.setEnabled(False)
         self.tree.clear()
@@ -219,7 +246,7 @@ class BackupDialog(AsyncDialog):
         folder = self.folder
         self._start_read(lambda: operations.list_backups(folder), self._loaded)
 
-    def _loaded(self, rows, error):
+    def _loaded(self, rows: Any, error: Any) -> None:
         self._loading = False
         self.remove_button.setEnabled(self.allow_delete and not self._removing)
         if error:
@@ -232,7 +259,7 @@ class BackupDialog(AsyncDialog):
                 self.tree.addTopLevelItem(row)
             self.summary.setText(f"백업 {len(rows)}개 · 합계 {readable_size(sum(r[1] for r in rows))}. 선택한 백업은 휴지통을 거치지 않고 바로 삭제됩니다.")
 
-    def choose(self):
+    def choose(self) -> None:
         if self._removing:
             return
         picked = QFileDialog.getExistingDirectory(self, "백업 폴더", str(self.folder))
@@ -242,11 +269,11 @@ class BackupDialog(AsyncDialog):
                 self.changed(self.folder)
             self.load()
 
-    def open_folder(self):
+    def open_folder(self) -> None:
         if self.folder.is_dir():
             os.startfile(str(self.folder))
 
-    def remove(self):
+    def remove(self) -> None:
         if not self.allow_delete or self._loading or self._removing or self._closed:
             return
         chosen = [Path(i.data(0, Qt.ItemDataRole.UserRole)) for i in self.tree.selectedItems()]
@@ -264,17 +291,17 @@ class BackupDialog(AsyncDialog):
         self.summary.setText("선택한 백업을 정리하는 중…")
         self._start_read(lambda: operations.remove_backups(chosen, folder), self._removed)
 
-    def _removed(self, _, error):
+    def _removed(self, _: Any, error: Any) -> None:
         if error:
             message(self, "삭제 실패", error, critical=True)
         self._removing = False
         self.load()
 
-    def reject(self):
+    def reject(self) -> None:
         if not self._removing:
             super().reject()
 
-    def closeEvent(self, event):
+    def closeEvent(self, event: Any) -> None:
         if self._removing:
             event.ignore()
         else:
@@ -283,7 +310,15 @@ class BackupDialog(AsyncDialog):
 
 class ProcessesDialog(QDialog):
     """Apps, not PIDs: what is running, and a way to close it unless `stop` is None (read-only)."""
-    def __init__(self, groups, running, stop=None, parent=None):
+    busy: Any
+    groups: Any
+    hint: Any
+    running: Any
+    stop: Any
+    stop_all: Any
+    stop_buttons: Any
+    tree: Any
+    def __init__(self, groups: Any, running: Any, stop: Any=None, parent: Any=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("실행 중 앱")
         self.setWindowModality(Qt.WindowModality.WindowModal)
@@ -310,7 +345,7 @@ class ProcessesDialog(QDialog):
         outer.addLayout(row)
         self.set_groups(groups, running)
 
-    def set_groups(self, groups, running):
+    def set_groups(self, groups: Any, running: Any) -> None:
         opened = {self.tree.topLevelItem(i).text(0) for i in range(self.tree.topLevelItemCount())
                   if self.tree.topLevelItem(i).isExpanded()}
         self.groups, self.running = groups, running
@@ -336,12 +371,12 @@ class ProcessesDialog(QDialog):
         self.set_busy(self.busy)
 
     @staticmethod
-    def blocked_reason(group):
+    def blocked_reason(group: Any) -> Any:
         if group.holds_self:
             return "이 프로그램이 이 앱 안에서 실행 중이라 함께 꺼집니다. 탐색기에서 실행.cmd로 다시 실행하세요."
         return "프로세스를 확인할 수 없어 종료할 수 없습니다."
 
-    def update_hint(self):
+    def update_hint(self) -> None:
         if not self.groups:
             text = "실행 중인 Codex·Claude·Gemini·Orca·Herdr 프로세스가 없습니다." if not self.running else "실행 상태를 확인하지 못해 모든 앱을 실행 중으로 간주합니다."
         elif not self.stop:
@@ -353,10 +388,10 @@ class ProcessesDialog(QDialog):
                 text += f"\n{', '.join(blocked)} 안에서 이 프로그램을 실행해 그 앱은 닫을 수 없습니다. 탐색기에서 실행.cmd로 다시 실행하세요."
         self.hint.setText(text)
 
-    def stop_everything(self):
+    def stop_everything(self) -> None:
         self.stop([g for g in self.groups if g.stoppable])
 
-    def set_busy(self, busy):
+    def set_busy(self, busy: Any) -> None:
         self.busy = busy
         for group in self.groups:
             widget = self.stop_buttons.get(group.name)
@@ -367,7 +402,7 @@ class ProcessesDialog(QDialog):
 
 
 class ResultDialog(QDialog):
-    def __init__(self, result, parent=None):
+    def __init__(self, result: Any, parent: Any=None) -> None:
         super().__init__(parent)
         archive, good, failed, notes = result
         self.setWindowTitle("정리 결과")

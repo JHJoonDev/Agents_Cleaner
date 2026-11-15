@@ -1,4 +1,9 @@
 __pycache__/
+.test-artifacts/
+.mypy_cache/
+.pytest_cache/
+.qa-*.log
+.hypothesis/
 *.pyc
 reports/
 # Screenshots taken from a real profile stay local

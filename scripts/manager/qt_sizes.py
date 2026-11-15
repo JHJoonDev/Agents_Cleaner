@@ -1,4 +1,6 @@
 """Lazy project-size tab, separate from AI record selections."""
+from __future__ import annotations
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar, ParamSpec, cast
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal, Qt
@@ -10,13 +12,14 @@ from .project_sizes import configured_roots, save_roots, scan_roots, recycle_can
 
 
 class ScanThread(QThread):
+    roots: Any
     complete = Signal(object, object)
 
-    def __init__(self, roots, parent):
+    def __init__(self, roots: Any, parent: Any) -> None:
         super().__init__(parent)
         self.roots = roots
 
-    def run(self):
+    def run(self) -> None:
         try:
             self.complete.emit(*scan_roots(self.roots))
         except Exception:
@@ -24,7 +27,15 @@ class ScanThread(QThread):
 
 
 class SizeTab(QWidget):
-    def __init__(self, allow_delete, parent=None):
+    allow_delete: Any
+    delete_button: Any
+    hint: Any
+    projects: Any
+    roots: Any
+    scan_button: Any
+    tree: Any
+    worker: Any
+    def __init__(self, allow_delete: Any, parent: Any=None) -> None:
         super().__init__(parent)
         self.allow_delete, self.projects, self.worker = allow_delete, [], None
         layout = QVBoxLayout(self)
@@ -47,7 +58,7 @@ class SizeTab(QWidget):
         self.delete_button.clicked.connect(self.review)
         layout.addWidget(self.delete_button)
 
-    def scan(self):
+    def scan(self) -> None:
         roots = [Path(x.strip()) for x in self.roots.text().split(";") if x.strip()]
         if not roots or any(not p.is_absolute() for p in roots):
             QMessageBox.warning(self, "검색 루트", "절대 경로를 입력하세요.")
@@ -60,7 +71,7 @@ class SizeTab(QWidget):
         self.worker.complete.connect(self.loaded)
         self.worker.start()
 
-    def loaded(self, projects, errors):
+    def loaded(self, projects: Any, errors: Any) -> None:
         self.projects = projects
         self.tree.clear()
         for p in projects:
@@ -79,9 +90,10 @@ class SizeTab(QWidget):
         self.delete_button.setEnabled(self.allow_delete)
         self.hint.setText(f"프로젝트 {len(projects)}개 · 회수 가능 {readable_size(sum(p.reclaimable for p in projects))} · 측정 오류 {len(errors) + sum(len(p.errors) for p in projects)}건")
 
-    def review(self):
+    def review(self) -> None:
         if not self.allow_delete:
             return
+        selected: list[Any]
         selected = []
         for i in range(self.tree.topLevelItemCount()):
             parent = self.tree.topLevelItem(i)
@@ -107,6 +119,7 @@ class SizeTab(QWidget):
         layout.addWidget(buttons)
         if dialog.exec() != QDialog.DialogCode.Accepted or not confirm.isChecked():
             return
+        errors: list[Any]
         errors = []
         for project, candidate in selected:
             try:
@@ -117,7 +130,7 @@ class SizeTab(QWidget):
             QMessageBox.warning(self, "처리 실패", "\n".join(errors))
         self.scan()
 
-    def close_worker(self):
+    def close_worker(self) -> Any:
         if self.worker and self.worker.isRunning():
             return False
         return True
