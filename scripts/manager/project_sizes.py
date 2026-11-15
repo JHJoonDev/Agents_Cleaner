@@ -20,6 +20,7 @@ CACHES = {"node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_
 DATA_DIRS = {"dataset", "datasets", "data", ".git"}
 BULK = {"uploads", "upload", "output", "outputs", "temp", "tmp"}
 SOURCE = {".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".c", ".cpp", ".h", ".java", ".cs", ".go", ".swift", ".kt", ".sql"}
+SQLITE_COMPANIONS = tuple(ext + suffix for ext in (".db", ".sqlite", ".sqlite3") for suffix in ("-wal", "-shm", "-journal"))
 
 
 def settings_path() -> Path:
@@ -40,9 +41,60 @@ def save_roots(roots: Iterable[Path]) -> None:
     target.write_text(json.dumps({"roots": [str(x) for x in roots]}, ensure_ascii=False, indent=2), encoding="utf8")
 
 
+def _regular_file(path: Path) -> bool:
+    try:
+        return stat.S_ISREG(path.lstat().st_mode) and not is_link(path)
+    except FileNotFoundError:
+        return False
+
+
+def _header(path: Path, size: int) -> bytes:
+    # Unbuffered reads keep signature probes bounded; no database library/locks.
+    with path.open('rb', buffering=0) as stream:
+        return stream.read(size)
+
+
+def _lmdb_data(path: Path) -> bool:
+    if not _regular_file(path):
+        return False
+    header = _header(path, 20)
+    # MDB_page headers are 12/16 bytes on 32/64-bit formats, respectively.
+    return any(header[offset:offset + 4] in (b'\xde\xc0\xef\xbe', b'\xbe\xef\xc0\xde') for offset in (12, 16))
+
+
+def _database_directory(path: Path) -> bool:
+    if _regular_file(path / 'data.mdb') and _regular_file(path / 'lock.mdb'):
+        return True
+    return _regular_file(path / 'CURRENT') and any(
+        _regular_file(entry) for entry in path.glob('MANIFEST-*'))
+
+
+def _database_protected(path: Path) -> bool:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False  # Name-only callers may ask about a path that does not exist.
+    if is_link(path):
+        return True
+    if stat.S_ISDIR(info.st_mode):
+        return _database_directory(path)
+    if not stat.S_ISREG(info.st_mode):
+        return False
+    if _database_directory(path.parent) or _header(path, 16) == b'SQLite format 3\0':
+        return True
+    for suffix in ('-wal', '-shm', '-journal'):
+        if path.name.lower().endswith(suffix):
+            data = path.with_name(path.name[:-len(suffix)])
+            if _regular_file(data) and _header(data, 16) == b'SQLite format 3\0':
+                return True
+    if path.name.lower().endswith('-lock'):
+        return _lmdb_data(path.with_name(path.name[:-5]))
+    return _regular_file(path.with_name(path.name + '-lock')) and _lmdb_data(path)
+
+
 def protected(path: Path) -> bool:
     name = path.name.lower()
-    return name in DATA_DIRS or name.startswith(("toxauto-", "dataset")) or name == ".env" or name.startswith(".env.") or path.suffix.lower() in {".db", ".sqlite", ".sqlite3", ".pem", ".key"} or name.endswith((".db-wal", ".db-shm"))
+    return name in DATA_DIRS or name.startswith(("toxauto-", "dataset")) or name == ".env" or name.startswith(".env.") or path.suffix.lower() in {".db", ".sqlite", ".sqlite3", ".pem", ".key"} or name.endswith(SQLITE_COMPANIONS) or _database_protected(path)
 
 
 @dataclass

@@ -5,7 +5,6 @@ import pytest
 from manager.project_sizes import scan_project
 
 @pytest.mark.parametrize('suffix',['.sqlite-wal','.sqlite-shm','.sqlite3-wal','.sqlite3-shm','.db-journal','.sqlite-journal','.sqlite3-journal'])
-@pytest.mark.xfail(strict=True,reason='QA-BUG: project-size planner protects SQLite DBs but not their WAL/SHM companions')
 def test_sqlite_companion_files_are_protected_like_the_database(suffix):
     with tempfile.TemporaryDirectory()as temporary:
         root=Path(temporary);(root/('state'+suffix.rsplit('-',1)[0])).write_bytes(b'synthetic-db')

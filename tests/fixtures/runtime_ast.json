@@ -5,7 +5,7 @@
   "scripts/manager/herdr.py": "06845f71211c9421961f399f88cbfcc89a956483d967ac2f690ff2bdeede37ab",
   "scripts/manager/model.py": "3e79e639077c23a15c99c361352383bcb970129521cb669ce69043804dd0c671",
   "scripts/manager/operations.py": "70f0ecb97e3bffd9cf1c3db80f3e990b757043ff5f8cb8889db0002bfbcda11a",
-  "scripts/manager/project_sizes.py": "c01e7068cfb27f7cea781c2089d4e93905f89e67b7720397d2e8d933bcee35da",
+  "scripts/manager/project_sizes.py": "f3404a4323fbe1230ada12e95f7c5dfebdcb253bf25b9c797156562392ba002d",
   "scripts/manager/providers.py": "616b05b0abb74eeb66fa301c6368e13ca6e139596c2d1f91ea35f948b42e0a29",
   "scripts/manager/qt_dialogs.py": "a63fd513407be82d8d7d8ccd8c9b6fc0447d290808cb06508f03a85d8dc873ce",
   "scripts/manager/qt_logic.py": "b9ea86cd3bc68f61c5a9fc6f86ba52ad93ca8c1c9d16effc14ed03e0cd7b187a",

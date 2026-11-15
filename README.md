@@ -83,6 +83,14 @@ AI 기록과 Herdr 터미널의 작업 폴더를 프로젝트로 보고, 그 안
 
 `프로젝트 용량` 탭에서 루트(기본: 이 앱이 들어 있는 상위 폴더, `AGENTS_CLEANER_SIZE_ROOT`로 변경)를 조회하면 프로젝트별 용량과 정리 후보를 용량순으로 표시합니다. 기본은 조회만 하며 `ToxAuto-*`와 링크·junction은 제외합니다. 캐시·가상환경·빌드 출력, 500MiB 초과 업로드/출력/임시 폴더와 파일을 표시합니다. `.git`, 설정·키·DB·데이터 폴더를 포함한 대상과 대용량 소스는 보호합니다. 개별 후보 체크와 확인 체크 후에만 기존 휴지통 기능으로 이동하며, 조회 후 변경된 대상은 거부합니다.
 
+DB 보호 범위:
+
+- SQLite: `.db`·`.sqlite`·`.sqlite3`와 각각의 `-wal`·`-shm`·`-journal`. 다른 확장자도 첫 16바이트가 `SQLite format 3\0`이면 DB와 해당 동반 파일을 보호합니다.
+- LMDB: 같은 폴더의 `data.mdb`+`lock.mdb` 쌍을 보호합니다. 단일 파일 형식은 `<이름>`+`<이름>-lock` 쌍이 있고 데이터 파일의 LMDB magic이 확인될 때 보호합니다.
+- LevelDB·RocksDB: 일반 파일 `CURRENT`와 `MANIFEST-*`가 함께 있는 DB 디렉터리 전체를 보호합니다. 내부 `.ldb`·`.sst`·`.log`·`LOCK`·`LOG`도 정리하지 않습니다.
+
+DB를 포함한 상위 캐시·출력 폴더도 정리할 수 없습니다. DB 밖의 일반 `LOG`·`LOCK`·`CURRENT` 이름만으로 보호하지 않습니다. 판별은 읽기 전용의 짧은 헤더 조회만 사용하며 DB 연결·잠금을 만들지 않습니다. 읽기·측정 실패는 정리를 차단합니다.
+
 ```
 py -3.11 scripts/main.py --size-report reports/project-sizes.md
 py -3.11 scripts/main.py --size-report reports/project-sizes.md --size-root "D:\Projects" --notify
